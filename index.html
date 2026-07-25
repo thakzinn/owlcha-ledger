@@ -1,18 +1,340 @@
 <!DOCTYPE html>
+<html lang="th">
 
-<html>
 <head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <title>my-first-website</title>
-  <LINK href="styles.css" rel="stylesheet" type="text/css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>บันทึกรายการรายรับ-รายจ่าย</title>
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <style>
+    body {
+      font-family: 'Kanit', sans-serif;
+    }
+
+    #captureSummaryWrapper {
+      border: 2px solid #d1d5db;
+      /* ใช้สีเทาอ่อนหรือสีที่ต้องการ */
+      border-radius: 10px;
+      /* ถ้าต้องการความโค้ง */
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+      background: #fff;
+      /* อาจเพิ่ม padding ด้วย */
+      padding: 24px;
+    }
+  </style>
 </head>
 
-<body>
+<body class="bg-gray-50 min-h-screen flex items-start justify-center p-4">
+  <div class="w-full max-w-7xl bg-white rounded-2xl shadow-lg p-10">
+    <h1 class="text-3xl font-semibold text-gray-800 mb-8 text-center">บันทึกรายการรายรับ-รายจ่าย</h1>
+    <div class="mb-6">
+      <label for="date" class="block text-sm font-medium text-gray-700 mb-1">วันที่ดำเนินการ</label>
+      <input type="date" id="date" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+    </div>
+    <div id="entries-container" class="space-y-6">
+      <!-- template row -->
+      <div class="entry-row grid grid-cols-12 gap-4 items-end">
+        <div class="col-span-2">
+          <label class="block text-xs font-medium text-gray-700 mb-1">ประเภท</label>
+          <select class="type px-3 py-2 w-full border border-gray-300 rounded-lg">
+            <option value="expense">รายจ่าย</option>
+            <option value="income">รายรับ</option>
+          </select>
+        </div>
+        <div class="col-span-4">
+          <label class="block text-xs font-medium text-gray-700 mb-1">รายการ</label>
+          <input type="text" placeholder="คำอธิบาย" class="description px-3 py-2 w-full border border-gray-300 rounded-lg" list="desc-list" autocomplete="off" />
+          <datalist id="desc-list"></datalist>
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs font-medium text-gray-700 mb-1">จำนวน (฿)</label>
+          <input type="text" class="amount px-3 py-2 w-full border border-gray-300 rounded-lg" placeholder="-0.00" />
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs font-medium text-gray-700 mb-1">ช่องทาง</label>
+          <select class="channel px-3 py-2 w-full border border-gray-300 rounded-lg">
+            <option>เงินสด</option>
+            <option>โอน</option>
+          </select>
+        </div>
+        <div class="col-span-2 flex items-center justify-center">
+          <button type="button" class="remove-entry flex items-center justify-center w-12 h-12 rounded-full bg-red-100 text-red-500 text-3xl font-bold shadow hover:bg-red-200">&times;</button>
+        </div>
+      </div>
+    </div>
+    <div class="mt-8 flex space-x-4">
+      <button id="add-entry" class="flex-1 bg-green-500 text-white py-3 rounded-lg text-lg font-semibold">+ เพิ่มรายการ</button>
+      <button id="save-all" class="flex-1 bg-blue-500 text-white py-3 rounded-lg text-lg font-semibold">บันทึกทั้งหมด</button>
+    </div>
+    <div id="summary" class="mt-8 p-6 bg-gray-100 rounded-lg hidden">
+      <h2 class="text-xl font-medium text-gray-800 mb-2">สรุปวันที่ <span id="summary-date"></span></h2>
+      <p class="text-gray-700">รายรับ: <span id="total-income"></span> ฿</p>
+      <p class="text-gray-700">รายจ่าย: <span id="total-expense"></span> ฿</p>
+      <p class="text-gray-700 font-semibold">คงเหลือ: <span id="balance"></span> ฿</p>
+    </div>
+  </div>
 
-<img src="https://octodex.github.com/images/daftpunktocat-thomas.gif" id="octocat" alt="octocat-gif" />
+  <script>
+    // LocalStorage helpers
+    function setCacheData(data) { localStorage.setItem('income_expense_cache', JSON.stringify(data)); }
+    function getCacheData() { try { return JSON.parse(localStorage.getItem('income_expense_cache')); } catch { return null; } }
+    function clearCacheData() { localStorage.removeItem('income_expense_cache'); }
 
-<!-- Change this code here by copy and pasting your template on line 15 -->
-<p>Welcome to your first GitHub Pages website!</p>
+    // Collect form data (no taxInvoiceChecked)
+    function collectFormData() {
+      const date = document.getElementById('date').value;
+      const entries = Array.from(document.querySelectorAll('.entry-row')).map(row => ({
+        type: row.querySelector('.type').value,
+        description: row.querySelector('.description').value,
+        amount: row.querySelector('.amount').value,
+        channel: row.querySelector('.channel').value
+      }));
+      return { date, entries };
+    }
 
+    // Restore form from cache
+    function restoreFormData(data) {
+      if (!data?.entries?.length) return;
+      document.getElementById('date').value = data.date;
+      const container = document.getElementById('entries-container');
+      // reset to one row
+      while (container.children.length > 1) container.lastChild.remove();
+      fillRow(container.children[0], data.entries[0]);
+      for (let i = 1; i < data.entries.length; i++) {
+        const clone = container.children[0].cloneNode(true);
+        fillRow(clone, data.entries[i]);
+        container.appendChild(clone);
+      }
+    }
+
+    function fillRow(row, entry) {
+      row.querySelector('.type').value = entry.type;
+      row.querySelector('.description').value = entry.description;
+      row.querySelector('.amount').value = entry.amount;
+      row.querySelector('.channel').value = entry.channel;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const today = new Date().toISOString().slice(0,10);
+      document.getElementById('date').value = today;
+
+      const container = document.getElementById('entries-container');
+      const addBtn    = document.getElementById('add-entry');
+      const saveBtn   = document.getElementById('save-all');
+      const dateInput = document.getElementById('date');
+
+      // Restore cache if exists
+      const cached = getCacheData();
+      if (cached) {
+        restoreFormData(cached);
+      }
+
+      function attachRow(row) {
+        const typeInput = row.querySelector('.type');
+        const amtInput  = row.querySelector('.amount');
+        const descInput = row.querySelector('.description');
+        const chanInput = row.querySelector('.channel');
+        const removeBtn = row.querySelector('.remove-entry');
+
+        typeInput.addEventListener('change', () => {
+          amtInput.placeholder = typeInput.value === 'expense' ? '-0.00' : '0.00';
+          setCacheData(collectFormData());
+        });
+
+        amtInput.addEventListener('input', () => {
+          let v = amtInput.value.replace(/[^0-9.]/g, '');
+          const parts = v.split('.');
+          if (parts.length > 2) v = parts[0] + '.' + parts[1];
+          amtInput.value = (typeInput.value === 'expense' ? '-' : '') + v;
+          setCacheData(collectFormData());
+        });
+
+        descInput.addEventListener('input', () => setCacheData(collectFormData()));
+        chanInput.addEventListener('change', () => setCacheData(collectFormData()));
+
+        removeBtn.addEventListener('click', () => {
+          if (container.children.length > 1) {
+            row.remove();
+            setCacheData(collectFormData());
+          }
+        });
+      }
+
+      // Attach to initial row
+      container.querySelectorAll('.entry-row').forEach(attachRow);
+
+      addBtn.addEventListener('click', () => {
+        const clone = container.querySelector('.entry-row').cloneNode(true);
+        fillRow(clone, { type:'expense', description:'', amount:'', channel:'เงินสด' });
+        container.appendChild(clone);
+        attachRow(clone);
+        setCacheData(collectFormData());
+      });
+
+      // Load existing entries on date change
+      dateInput.addEventListener('change', () => {
+      const d = dateInput.value;
+      if (!d) return;
+      // Show loading indicator
+      Swal.fire({
+      title: 'กำลังโหลดข้อมูล...',
+      allowOutsideClick: false,
+      didOpen: ()=>Swal.showLoading()
+      });
+      google.script.run
+      .withSuccessHandler(entries => {
+      clearCacheData();
+      if (entries.length) {
+      const cache = { date: d, entries };
+      setCacheData(cache);
+      restoreFormData(cache);
+      container.querySelectorAll('.entry-row').forEach(attachRow);
+      Swal.fire({ icon:'success', title:`พบ ${entries.length} รายการ`, timer:1500, showConfirmButton:false });
+      } else {
+      // reset to one empty row
+      while (container.children.length>1) container.lastChild.remove();
+      fillRow(container.children[0], {type:'expense',description:'',amount:'',channel:'เงินสด'});
+      setCacheData({ date:d, entries:[{type:'expense',description:'',amount:'',channel:'เงินสด'}] });
+      Swal.fire({ icon:'info', title:'ไม่พบข้อมูล', timer:1500, showConfirmButton:false });
+      }
+      })
+      .withFailureHandler(err =>
+      Swal.fire({ icon:'error', title:'โหลดไม่สำเร็จ', text:err.message })
+      )
+      .getEntriesByDate(d);
+      });
+
+      function getSummaryHtml(entries) {
+        const selDate = document.getElementById('date').value;
+        const dt = new Date(selDate).toLocaleDateString('th-TH', {
+          year:'numeric',month:'long',day:'numeric',weekday:'long'
+        });
+        let inc=0, exp=0;
+        const rows = entries.map(e=>{
+          const amt = e.amount;
+          if (amt<0) exp += Math.abs(amt); else inc += amt;
+          return `<tr>
+            <td class="border px-2 py-1 text-center">${amt<0?'รายจ่าย':'รายรับ'}</td>
+            <td class="border px-2 py-1">${e.description}</td>
+            <td class="border px-2 py-1 text-right">${amt.toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
+            <td class="border px-2 py-1 text-center">${e.channel}</td>
+          </tr>`;
+        }).join('');
+        const bal = inc - exp;
+        return `
+          <div class="mb-2 text-base font-medium">สรุปรายการ - ${dt}</div>
+          <table class="w-full mb-2 border">
+            <thead><tr class="bg-gray-100">
+              <th class="border px-2 py-1">ประเภท</th>
+              <th class="border px-2 py-1">รายการ</th>
+              <th class="border px-2 py-1">จำนวน (฿)</th>
+              <th class="border px-2 py-1">ช่องทาง</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="flex justify-between">
+            <span>รวมรายรับ: <b class="text-green-600">${inc.toLocaleString('th-TH',{minimumFractionDigits:2})}</b> ฿</span>
+            <span>รวมรายจ่าย: <b class="text-red-600">${exp.toLocaleString('th-TH',{minimumFractionDigits:2})}</b> ฿</span>
+            <span>คงเหลือ: <b class="text-blue-600">${bal.toLocaleString('th-TH',{minimumFractionDigits:2})}</b> ฿</span>
+          </div>`;
+      }
+
+saveBtn.addEventListener('click', () => {
+  const date = dateInput.value;
+  const entries = Array.from(container.querySelectorAll('.entry-row')).map(r => ({
+    type: r.querySelector('.type').value,
+    description: r.querySelector('.description').value,
+    amount: parseFloat(r.querySelector('.amount').value) || 0,
+    channel: r.querySelector('.channel').value
+  }));
+  if (!entries.length) {
+    return Swal.fire('กรุณาเพิ่มรายการอย่างน้อย 1 รายการ', '', 'warning');
+  }
+
+  // Build summary HTML
+  const summaryHtml = getSummaryHtml(entries);
+
+  Swal.fire({
+    title: 'ตรวจสอบข้อมูลก่อนบันทึก',
+    html: summaryHtml,
+    icon: 'info',
+    showCancelButton: true,
+    confirmButtonText: 'บันทึก',
+    cancelButtonText: 'ยกเลิก',
+    width: 700
+  }).then(res => {
+    if (res.isConfirmed) {
+      // Prepare a hidden div for capture
+      let captureDiv = document.createElement('div');
+      captureDiv.id = 'captureSummaryWrapper';
+      captureDiv.style.position = 'fixed';
+      captureDiv.style.top = '-9999px';
+      captureDiv.style.left = '-9999px';
+      captureDiv.style.width = '620px';
+      captureDiv.style.background = '#fff';
+      captureDiv.style.border = "2px solid #d1d5db";
+      captureDiv.style.borderRadius = "10px";
+      captureDiv.style.boxShadow = "0 2px 8px rgba(0,0,0,0.07)";
+      captureDiv.style.background = "#fff";
+      captureDiv.style.padding = "24px";
+      captureDiv.innerHTML = summaryHtml;
+      document.body.appendChild(captureDiv);
+
+      Swal.fire({ title: '⏳ กำลังส่งข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+      html2canvas(captureDiv, {
+        scale: 2,
+        backgroundColor: "#fff",
+        useCORS: true,
+        width: captureDiv.offsetWidth,
+        height: captureDiv.offsetHeight,
+        imageSmoothingEnabled: false
+      }).then(canvas => {
+        const imgData = canvas.toDataURL('image/png');
+        document.body.removeChild(captureDiv);
+
+        google.script.run
+          .withSuccessHandler(() => { clearCacheData(); Swal.fire('✅ ส่งข้อมูลสำเร็จ!', '', 'success').then(() => reLoad()); })
+          .withFailureHandler(err => Swal.fire('❌ ส่งไม่สำเร็จ', err.message, 'error'))
+          .saveData({ date, entries }, imgData); // pass imgData to backend
+      });
+    }
+  });
+});
+
+      google.script.run.withSuccessHandler(descs=>{
+        document.getElementById('desc-list').innerHTML = descs.map(d=>`<option value="${d}">`).join('');
+      }).getDistinctDescriptions();
+
+// Show loading before fetching entries
+Swal.fire({ 
+  title: 'กำลังโหลดข้อมูล...', 
+  allowOutsideClick: false, 
+  didOpen: () => Swal.showLoading()
+});
+google.script.run
+  .withSuccessHandler(entries => {
+    if (entries.length) {
+      const cache = { date:today, entries };
+      setCacheData(cache);
+      restoreFormData(cache);
+      container.querySelectorAll('.entry-row').forEach(attachRow);
+    }
+    Swal.close(); // Close loading
+  })
+  .withFailureHandler(err => {
+    Swal.fire({ icon:'error', title:'โหลดไม่สำเร็จ', text:err.message });
+  })
+  .getEntriesByDate(today);
+    });
+
+    function reLoad() {
+      google.script.run.withSuccessHandler(url=>window.open(url,'_top')).getScriptURL();
+    }
+  </script>
 </body>
+
 </html>
