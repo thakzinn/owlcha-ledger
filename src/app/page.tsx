@@ -1,7 +1,8 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth, signOut } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { absoluteMaxSec } from "@/lib/constants";
+import { signOutAction } from "@/app/actions";
+import AppHeader from "@/components/AppHeader";
 import LedgerApp from "@/components/LedgerApp";
 import SessionBanner from "@/components/SessionBanner";
 
@@ -18,40 +19,15 @@ export default async function Home() {
         capSec={absoluteMaxSec()}
       />
 
-      <header className="mb-4 flex items-center justify-between rounded-xl bg-white p-4 shadow">
-        <div className="min-w-0">
-          <p className="truncate font-semibold text-gray-800">
-            {session.user?.name ?? "ผู้ใช้"}
-          </p>
-          <p className="truncate text-sm text-gray-500">{email}</p>
-        </div>
-        <form
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/login" });
-          }}
-        >
-          <button
-            type="submit"
-            className="shrink-0 rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
-          >
-            ออกจากระบบ
-          </button>
-        </form>
-      </header>
+      <AppHeader
+        name={session.user?.name ?? ""}
+        email={email}
+        signOutAction={signOutAction}
+      />
 
       <h1 className="mb-4 text-center text-xl font-semibold text-gray-800">
-        บันทึกรายการรายรับ-รายจ่าย 🦉🍵
+        บันทึกรายการรายรับ-รายจ่าย
       </h1>
-
-      <p className="mb-4 text-center">
-        <Link
-          href="/report-pnd94"
-          className="text-sm font-medium text-amber-600 underline hover:text-amber-700"
-        >
-          รายงานภาษี ภ.ง.ด.94
-        </Link>
-      </p>
 
       <LedgerApp email={email} />
     </main>
