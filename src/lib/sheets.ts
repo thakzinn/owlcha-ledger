@@ -216,7 +216,8 @@ export async function saveDay(
             {
               userEnteredValue: { numberValue: dateStrToSerial(date) },
               userEnteredFormat: {
-                numberFormat: { type: "DATE", pattern: "yyyy-mm-dd" },
+                // dd/mm/yyyy ให้เข้าชุดกับแถวเดิมในชีต (ค่าในเซลล์เป็น Date serial เหมือนกัน)
+                numberFormat: { type: "DATE", pattern: "dd/mm/yyyy" },
               },
             },
             { userEnteredValue: { stringValue: e.description } },

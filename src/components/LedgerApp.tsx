@@ -6,6 +6,7 @@ import Swal from "sweetalert2";
 import { todayBangkok } from "@/lib/date";
 import { typeFromAmount, toSignedAmount, type EntryType } from "@/lib/entries";
 import SummaryCard, { type SummaryEntry } from "@/components/SummaryCard";
+import GpCalculator from "@/components/GpCalculator";
 
 interface UiEntry {
   id: number;
@@ -70,6 +71,7 @@ export default function LedgerApp({ email }: { email: string }) {
   const [status, setStatus] = useState<"idle" | "loading" | "saving">("idle");
   const [restored, setRestored] = useState(false);
 
+  const [gpTargetId, setGpTargetId] = useState<number | null>(null);
   const [captureData, setCaptureData] = useState<{
     date: string;
     entries: SummaryEntry[];
@@ -515,7 +517,7 @@ export default function LedgerApp({ email }: { email: string }) {
                 ×
               </button>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_180px]">
               <input
                 type="text"
                 placeholder="รายการ เช่น ชาไข่มุก"
@@ -527,17 +529,30 @@ export default function LedgerApp({ email }: { email: string }) {
                 onChange={(ev) => update(e.id, { description: ev.target.value })}
                 className="rounded-lg border border-gray-300 px-3 py-2"
               />
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0.00"
-                value={e.amount}
-                disabled={busy}
-                onChange={(ev) => update(e.id, { amount: sanitizeAmount(ev.target.value) })}
-                className={`rounded-lg border border-gray-300 px-3 py-2 text-right ${
-                  e.type === "expense" ? "text-red-700" : "text-green-700"
-                }`}
-              />
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={e.amount}
+                  disabled={busy}
+                  onChange={(ev) => update(e.id, { amount: sanitizeAmount(ev.target.value) })}
+                  className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-right ${
+                    e.type === "expense" ? "text-red-700" : "text-green-700"
+                  }`}
+                />
+                {e.type === "income" && (
+                  <button
+                    type="button"
+                    title="คำนวณค่า GP (grab/lineman)"
+                    disabled={busy}
+                    onClick={() => setGpTargetId(e.id)}
+                    className="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-sm font-semibold text-blue-700 enabled:hover:bg-blue-100 disabled:opacity-40"
+                  >
+                    GP
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -587,6 +602,16 @@ export default function LedgerApp({ email }: { email: string }) {
           {status === "saving" ? "กำลังบันทึก…" : "บันทึกทั้งหมด"}
         </button>
       </div>
+
+      {gpTargetId !== null && (
+        <GpCalculator
+          onClose={() => setGpTargetId(null)}
+          onApply={(net) => {
+            update(gpTargetId, { amount: net });
+            setGpTargetId(null);
+          }}
+        />
+      )}
 
       {/* พื้นที่ render สรุปนอกจอ — ใช้ทั้ง preview (clone) และ capture รูป */}
       {captureData && (
