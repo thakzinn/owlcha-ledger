@@ -29,6 +29,24 @@ const newRow = (): UiEntry => ({
   channel: "เงินสด",
 });
 
+/** วันที่ยังไม่มีข้อมูล → prefill รายการประจำของร้าน (จำนวนเงินเว้นว่างให้กรอก) */
+const templateRows = (): UiEntry[] =>
+  (
+    [
+      ["expense", "น้ำแข็ง", "โอน"],
+      ["expense", "ค่าแรงพนักงาน", "โอน"],
+      ["income", "ขายหน้าร้าน", "เงินสด"],
+      ["income", "kshop", "โอน"],
+      ["income", "grab", "โอน"],
+    ] as const
+  ).map(([type, description, channel]) => ({
+    id: nextId++,
+    type,
+    description,
+    amount: "",
+    channel,
+  }));
+
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -108,12 +126,12 @@ export default function LedgerApp({ email }: { email: string }) {
             });
           }
         } else {
-          setEntries([newRow()]);
+          setEntries(templateRows());
           if (!silent) {
             void Swal.fire({
               icon: "info",
-              title: "ยังไม่มีข้อมูลของวันนี้",
-              timer: 1200,
+              title: "ยังไม่มีข้อมูล — เตรียมรายการประจำให้แล้ว",
+              timer: 1500,
               showConfirmButton: false,
             });
           }
@@ -217,12 +235,15 @@ export default function LedgerApp({ email }: { email: string }) {
 
   // ---------- บันทึก ----------
 
+  /** แถว template ที่ไม่ได้กรอกจำนวนเงิน (ช่องว่าง) จะไม่ถูกบันทึก — กันแถว 0 ขยะลงชีต */
   const buildPayload = (): SummaryEntry[] =>
-    entries.map((e) => ({
-      description: e.description.trim(),
-      amount: toSignedAmount(e.type, parseFloat(e.amount) || 0),
-      channel: e.channel,
-    }));
+    entries
+      .filter((e) => e.amount.trim() !== "")
+      .map((e) => ({
+        description: e.description.trim(),
+        amount: toSignedAmount(e.type, parseFloat(e.amount) || 0),
+        channel: e.channel,
+      }));
 
   /** N12: แนบ element เข้า DOM ก่อน → fonts.load ทุกน้ำหนักที่ใช้ → fonts.ready → capture */
   const captureImage = async (): Promise<string | null> => {
@@ -389,6 +410,14 @@ export default function LedgerApp({ email }: { email: string }) {
       return;
     }
     const payload = buildPayload();
+    if (!payload.length) {
+      void Swal.fire({
+        icon: "warning",
+        title: "ยังไม่ได้กรอกจำนวนเงิน",
+        text: "กรอกจำนวนเงินอย่างน้อย 1 รายการก่อนบันทึก (แถวที่เว้นว่างจะไม่ถูกบันทึก)",
+      });
+      return;
+    }
 
     // preview จาก React render (escape อัตโนมัติ) → clone ให้ SweetAlert2
     setCaptureData({ date, entries: payload });
