@@ -7,3 +7,18 @@
 body {
   font-family: var(--font-sans);
 }
+
+/* หน้ารายงานสำหรับพิมพ์ (report-cashbook) — inert กับหน้าอื่นที่ไม่มีการพิมพ์ตาราง */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+  tr {
+    break-inside: avoid;
+  }
+  /* หัวตาราง (รวมบล็อกหัวรายงานใน thead) พิมพ์ซ้ำทุกหน้า */
+  thead {
+    display: table-header-group;
+  }
+}

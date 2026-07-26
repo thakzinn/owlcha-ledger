@@ -139,18 +139,25 @@ export interface RangeEntry {
   gross: number | null;
 }
 
-/** รายรับทุกแถว (amount ≥ 0) ในช่วง [from, to] — ไม่มี version/conflict เพราะไม่มีการเขียน */
+/**
+ * รายรับทุกแถว (amount ≥ 0) ในช่วง [from, to] — ไม่มี version/conflict เพราะไม่มีการเขียน
+ * opts.includeAll = true → รวมรายจ่าย (amount < 0) ด้วย สำหรับหน้ารายงานเงินสดรับ-จ่าย
+ */
 export async function getRange(
   accessToken: string,
   from: string,
   to: string,
+  opts?: { includeAll?: boolean },
 ): Promise<{ entries: RangeEntry[] }> {
   const rows = await readRows(sheetsClient(accessToken));
   return {
     entries: rows
       .filter(
         (r): r is SheetRow & { date: string } =>
-          r.date !== null && r.date >= from && r.date <= to && r.amount >= 0,
+          r.date !== null &&
+          r.date >= from &&
+          r.date <= to &&
+          (opts?.includeAll === true || r.amount >= 0),
       )
       .map(({ date, description, amount, channel, gross }) => ({
         date,

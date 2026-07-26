@@ -6,8 +6,9 @@ import { rangeQuerySchema } from "@/lib/schema";
 import { getRange, SheetAccessError, SheetNotFoundError } from "@/lib/sheets";
 
 /**
- * GET /api/entries/range?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * GET /api/entries/range?from=YYYY-MM-DD&to=YYYY-MM-DD[&include=all]
  * รายรับทุกแถวในช่วง สำหรับหน้ารายงาน ภ.ง.ด.94 (read-only — ADR §11.8)
+ * include=all → รวมรายจ่ายด้วย สำหรับหน้ารายงานเงินสดรับ-จ่าย; ค่าอื่น/ไม่ส่ง = รายรับเท่านั้น
  */
 
 function mapSheetError(err: unknown): NextResponse {
@@ -41,10 +42,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const includeAll = req.nextUrl.searchParams.get("include") === "all";
     const data = await getRange(
       guard.token.accessToken ?? "",
       parsed.data.from,
       parsed.data.to,
+      { includeAll },
     );
     return NextResponse.json(data);
   } catch (err) {
