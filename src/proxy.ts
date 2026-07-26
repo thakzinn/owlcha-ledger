@@ -19,7 +19,10 @@ function buildCsp(nonce: string): string {
     `default-src 'self'`,
     // nonce + strict-dynamic คือด่านกัน XSS จริง (ไม่มี external script แล้ว
     // หลังตัด Google Picker ออกตาม ADR §11.6)
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    // dev เท่านั้น: Next.js/React dev mode ต้องใช้ eval() สำหรับ debugging features
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${
+      process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""
+    }`,
     // 'unsafe-inline' เฉพาะ style — จำเป็นสำหรับ SweetAlert2 (Accepted Risk R-10 ใน ADR-001)
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' blob: data: https://lh3.googleusercontent.com`,

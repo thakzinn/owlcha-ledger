@@ -6,7 +6,6 @@ import Swal from "sweetalert2";
 import { todayBangkok } from "@/lib/date";
 import { typeFromAmount, toSignedAmount, type EntryType } from "@/lib/entries";
 import SummaryCard, { type SummaryEntry } from "@/components/SummaryCard";
-import GpCalculator, { type GpResult } from "@/components/GpCalculator";
 
 interface UiEntry {
   id: number;
@@ -15,13 +14,33 @@ interface UiEntry {
   /** ค่าบวกเป็น string ตามที่พิมพ์ — แปลงเครื่องหมายตอน submit เท่านั้น */
   amount: string;
   channel: "เงินสด" | "โอน";
-  /** breakdown จากเครื่องคิดเลข GP (แสดงบนการ์ดเท่านั้น — ชีตเก็บ net ใน amount) */
-  gp?: GpResult;
+  /** เปอร์เซ็นต์หัก GP/VAT ของแถวเดลิเวอรี — แก้ได้รายแถว (default 30 / 7) */
+  gpPct?: string;
+  vatPct?: string;
+  /** ยอดขายบนแอป (คอลัมน์ F) — แก้เองได้ ไม่คำนวณย้อนกลับไปกระทบค่าอื่น */
+  gross?: string;
 }
 
-/** ปุ่ม GP เฉพาะรายรับจากแอปเดลิเวอรีที่โดนหัก GP */
+/** รายรับจากแอปเดลิเวอรีที่โดนหัก GP — แสดง breakdown อัตโนมัติ */
 const isDeliveryDesc = (desc: string): boolean =>
   /grab|lineman|shopee/i.test(desc);
+
+const DEFAULT_GP_PCT = "30";
+const DEFAULT_VAT_PCT = "7";
+
+/**
+ * ช่องจำนวนเงินของแถวเดลิเวอรี = "ยอดที่ร้านได้รับสุทธิ" → คำนวณย้อนกลับ:
+ * ยอดขายบนแอป = สุทธิ ÷ (1 − GP% × (1+VAT%)), GP = ยอดขาย × GP%, VAT = GP × VAT%
+ * (แสดงบนการ์ดเท่านั้น — ชีตเก็บยอดสุทธิใน D ตาม data contract เดิม)
+ */
+function gpBreakdownFromNet(net: number, gpPct: number, vatPct: number) {
+  const factor = 1 - (gpPct / 100) * (1 + vatPct / 100);
+  if (factor <= 0) return null;
+  const gross = net / factor;
+  const gpAmt = gross * (gpPct / 100);
+  const vatAmt = gpAmt * (vatPct / 100);
+  return { gross, gpAmt, vatAmt };
+}
 
 interface ApiError {
   error?: { code?: string; message?: string };
@@ -77,7 +96,6 @@ export default function LedgerApp({ email }: { email: string }) {
   const [status, setStatus] = useState<"idle" | "loading" | "saving">("idle");
   const [restored, setRestored] = useState(false);
 
-  const [gpTargetId, setGpTargetId] = useState<number | null>(null);
   const [captureData, setCaptureData] = useState<{
     date: string;
     entries: SummaryEntry[];
@@ -109,7 +127,7 @@ export default function LedgerApp({ email }: { email: string }) {
           return;
         }
         const data = (await res.json()) as {
-          entries: SummaryEntry[];
+          entries: (SummaryEntry & { gross?: number | null })[];
           version: string;
           latestDate: string | null;
         };
@@ -123,6 +141,7 @@ export default function LedgerApp({ email }: { email: string }) {
               description: e.description,
               amount: String(Math.abs(e.amount)),
               channel: e.channel === "โอน" ? "โอน" : "เงินสด",
+              gross: e.gross != null ? String(e.gross) : undefined,
             })),
           );
           if (!silent) {
@@ -244,14 +263,30 @@ export default function LedgerApp({ email }: { email: string }) {
   // ---------- บันทึก ----------
 
   /** แถว template ที่ไม่ได้กรอกจำนวนเงิน (ช่องว่าง) จะไม่ถูกบันทึก — กันแถว 0 ขยะลงชีต */
-  const buildPayload = (): SummaryEntry[] =>
+  const buildPayload = (): (SummaryEntry & { gross?: number })[] =>
     entries
       .filter((e) => e.amount.trim() !== "")
-      .map((e) => ({
-        description: e.description.trim(),
-        amount: toSignedAmount(e.type, parseFloat(e.amount) || 0),
-        channel: e.channel,
-      }));
+      .map((e) => {
+        const base = {
+          description: e.description.trim(),
+          amount: toSignedAmount(e.type, parseFloat(e.amount) || 0),
+          channel: e.channel,
+        };
+        // ยอดขายบนแอป (คอลัมน์ F): ใช้ค่าที่แก้เอง หรือค่าที่คำนวณจากยอดสุทธิ
+        if (e.type === "income" && isDeliveryDesc(e.description)) {
+          const manual = e.gross?.trim() ? parseFloat(e.gross) : NaN;
+          const computed = gpBreakdownFromNet(
+            parseFloat(e.amount) || 0,
+            parseFloat(e.gpPct ?? DEFAULT_GP_PCT) || 0,
+            parseFloat(e.vatPct ?? DEFAULT_VAT_PCT) || 0,
+          );
+          const gross = Number.isFinite(manual) ? manual : computed?.gross;
+          if (gross != null && Number.isFinite(gross) && gross > 0) {
+            return { ...base, gross: Math.round(gross * 100) / 100 };
+          }
+        }
+        return base;
+      });
 
   /** N12: แนบ element เข้า DOM ก่อน → fonts.load ทุกน้ำหนักที่ใช้ → fonts.ready → capture */
   const captureImage = async (): Promise<string | null> => {
@@ -458,22 +493,25 @@ export default function LedgerApp({ email }: { email: string }) {
         </div>
       )}
 
-      <div className="mb-4 rounded-xl bg-white p-4 shadow">
-        <label htmlFor="date" className="mb-1 block text-sm font-medium text-gray-700">
-          วันที่ดำเนินการ
-        </label>
-        <input
-          id="date"
-          type="date"
-          value={date}
-          disabled={busy}
-          onChange={(e) => {
-            const d = e.target.value;
-            setDate(d);
-            if (d) void loadDay(d);
-          }}
-          className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-blue-400 focus:outline-none"
-        />
+      {/* วันที่ — pin ติดขอบบนจอตลอด (คู่กับแถบสรุปที่ pin ล่าง) */}
+      <div className="sticky top-0 z-40 -mx-4 mb-4 border-b border-gray-200 bg-gray-50/95 px-4 py-2 backdrop-blur">
+        <div className="rounded-xl bg-white p-3 shadow">
+          <label htmlFor="date" className="mb-1 block text-sm font-medium text-gray-700">
+            วันที่ดำเนินการ
+          </label>
+          <input
+            id="date"
+            type="date"
+            value={date}
+            disabled={busy}
+            onChange={(e) => {
+              const d = e.target.value;
+              setDate(d);
+              if (d) void loadDay(d);
+            }}
+            className="w-full rounded-lg border border-gray-300 px-4 py-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+          />
+        </div>
       </div>
 
       {status === "loading" && (
@@ -513,16 +551,66 @@ export default function LedgerApp({ email }: { email: string }) {
                 <option>เงินสด</option>
                 <option>โอน</option>
               </select>
-              {e.gp && (
-                <div className="ml-1 min-w-0 flex-1 self-center text-right text-[11px] leading-tight text-gray-500">
-                  <p className="truncate">
-                    ยอดขายบนแอป {fmt(e.gp.gross)} − GP {e.gp.gpPct}% {fmt(e.gp.gpAmt)}
-                  </p>
-                  <p className="truncate">
-                    − VAT {e.gp.vatPct}% {fmt(e.gp.vatAmt)} = สุทธิ {fmt(e.gp.net)}
-                  </p>
-                </div>
-              )}
+              {e.type === "income" &&
+                isDeliveryDesc(e.description) &&
+                (parseFloat(e.amount) || 0) > 0 &&
+                (() => {
+                  const gpPct = e.gpPct ?? DEFAULT_GP_PCT;
+                  const vatPct = e.vatPct ?? DEFAULT_VAT_PCT;
+                  const b = gpBreakdownFromNet(
+                    parseFloat(e.amount),
+                    parseFloat(gpPct) || 0,
+                    parseFloat(vatPct) || 0,
+                  );
+                  const pctInput =
+                    "w-10 rounded border border-gray-200 bg-white px-1 py-0 text-right text-[11px] text-gray-700";
+                  return (
+                    <div className="ml-1 min-w-0 flex-1 self-center text-right text-[11px] leading-snug text-gray-500">
+                      <p className="mb-1 flex items-center justify-end gap-1.5 whitespace-nowrap">
+                        <span className="text-xs">ยอดขายบนแอป</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          aria-label="ยอดขายบนแอป (บันทึกลงคอลัมน์ F)"
+                          value={e.gross ?? (b ? b.gross.toFixed(2) : "")}
+                          disabled={busy}
+                          onChange={(ev) =>
+                            // แก้เองได้ — ไม่คำนวณย้อนกลับไปกระทบยอดสุทธิ/GP/VAT
+                            update(e.id, { gross: sanitizeAmount(ev.target.value) })
+                          }
+                          className="w-28 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-right text-sm font-medium text-gray-800"
+                        />
+                      </p>
+                      <p className="flex items-center justify-end gap-1 whitespace-nowrap">
+                        <span>ค่า GP</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          aria-label="เปอร์เซ็นต์ GP"
+                          value={gpPct}
+                          disabled={busy}
+                          onChange={(ev) =>
+                            update(e.id, { gpPct: sanitizeAmount(ev.target.value) })
+                          }
+                          className={pctInput}
+                        />
+                        <span>% {b ? fmt(b.gpAmt) : "—"} · VAT</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          aria-label="เปอร์เซ็นต์ VAT บนค่า GP"
+                          value={vatPct}
+                          disabled={busy}
+                          onChange={(ev) =>
+                            update(e.id, { vatPct: sanitizeAmount(ev.target.value) })
+                          }
+                          className={pctInput}
+                        />
+                        <span>% {b ? fmt(b.vatAmt) : "—"}</span>
+                      </p>
+                    </div>
+                  );
+                })()}
               <button
                 type="button"
                 aria-label="ลบรายการ"
@@ -545,33 +633,21 @@ export default function LedgerApp({ email }: { email: string }) {
                 onChange={(ev) => update(e.id, { description: ev.target.value })}
                 className="rounded-lg border border-gray-300 px-3 py-2"
               />
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={e.amount}
-                  disabled={busy}
-                  onChange={(ev) =>
-                    // แก้ยอดเองทีหลัง = breakdown GP เดิมไม่ตรงแล้ว → ล้างทิ้ง
-                    update(e.id, { amount: sanitizeAmount(ev.target.value), gp: undefined })
-                  }
-                  className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-right ${
-                    e.type === "expense" ? "text-red-700" : "text-green-700"
-                  }`}
-                />
-                {e.type === "income" && isDeliveryDesc(e.description) && (
-                  <button
-                    type="button"
-                    title="คำนวณค่า GP (grab/lineman)"
-                    disabled={busy}
-                    onClick={() => setGpTargetId(e.id)}
-                    className="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-sm font-semibold text-blue-700 enabled:hover:bg-blue-100 disabled:opacity-40"
-                  >
-                    GP
-                  </button>
-                )}
-              </div>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder={
+                  e.type === "income" && isDeliveryDesc(e.description)
+                    ? "ยอดที่ร้านได้รับสุทธิ"
+                    : "0.00"
+                }
+                value={e.amount}
+                disabled={busy}
+                onChange={(ev) => update(e.id, { amount: sanitizeAmount(ev.target.value) })}
+                className={`rounded-lg border border-gray-300 px-3 py-2 text-right ${
+                  e.type === "expense" ? "text-red-700" : "text-green-700"
+                }`}
+              />
             </div>
           </div>
         ))}
@@ -583,54 +659,45 @@ export default function LedgerApp({ email }: { email: string }) {
         ))}
       </datalist>
 
-      {/* ยอดสรุปสด */}
-      <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-white p-4 text-center shadow">
-        <div>
-          <p className="text-xs text-gray-500">รายรับ</p>
-          <p className="font-semibold text-green-600">{fmt(totals.income)}</p>
+      {/* ยอดสรุปสด + ปุ่มหลัก — pin ติดขอบล่างจอตลอด เนื้อหาเลื่อนอยู่ด้านหลัง */}
+      <div className="sticky bottom-0 z-40 -mx-4 mt-4 border-t border-gray-200 bg-gray-50/95 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur">
+        <div className="grid grid-cols-3 gap-2 rounded-xl bg-white p-3 text-center shadow">
+          <div>
+            <p className="text-xs text-gray-500">รายรับ</p>
+            <p className="font-semibold text-green-600">{fmt(totals.income)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">รายจ่าย</p>
+            <p className="font-semibold text-red-600">{fmt(totals.expense)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">คงเหลือ</p>
+            <p
+              className={`font-semibold ${totals.balance < 0 ? "text-red-600" : "text-blue-600"}`}
+            >
+              {fmt(totals.balance)}
+            </p>
+          </div>
         </div>
-        <div>
-          <p className="text-xs text-gray-500">รายจ่าย</p>
-          <p className="font-semibold text-red-600">{fmt(totals.expense)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-gray-500">คงเหลือ</p>
-          <p
-            className={`font-semibold ${totals.balance < 0 ? "text-red-600" : "text-blue-600"}`}
+        <div className="mt-2 flex gap-3">
+          <button
+            type="button"
+            onClick={addRow}
+            disabled={busy}
+            className="flex-1 rounded-lg bg-green-500 py-3 text-lg font-semibold text-white enabled:hover:bg-green-600 disabled:opacity-50"
           >
-            {fmt(totals.balance)}
-          </p>
+            + เพิ่มรายการ
+          </button>
+          <button
+            type="button"
+            onClick={() => void onSaveClick()}
+            disabled={busy}
+            className="flex-1 rounded-lg bg-blue-500 py-3 text-lg font-semibold text-white enabled:hover:bg-blue-600 disabled:opacity-50"
+          >
+            {status === "saving" ? "กำลังบันทึก…" : "บันทึกทั้งหมด"}
+          </button>
         </div>
       </div>
-
-      <div className="mt-4 flex gap-3 pb-8">
-        <button
-          type="button"
-          onClick={addRow}
-          disabled={busy}
-          className="flex-1 rounded-lg bg-green-500 py-3 text-lg font-semibold text-white enabled:hover:bg-green-600 disabled:opacity-50"
-        >
-          + เพิ่มรายการ
-        </button>
-        <button
-          type="button"
-          onClick={() => void onSaveClick()}
-          disabled={busy}
-          className="flex-1 rounded-lg bg-blue-500 py-3 text-lg font-semibold text-white enabled:hover:bg-blue-600 disabled:opacity-50"
-        >
-          {status === "saving" ? "กำลังบันทึก…" : "บันทึกทั้งหมด"}
-        </button>
-      </div>
-
-      {gpTargetId !== null && (
-        <GpCalculator
-          onClose={() => setGpTargetId(null)}
-          onApply={(result) => {
-            update(gpTargetId, { amount: result.net.toFixed(2), gp: result });
-            setGpTargetId(null);
-          }}
-        />
-      )}
 
       {/* พื้นที่ render สรุปนอกจอ — ใช้ทั้ง preview (clone) และ capture รูป */}
       {captureData && (

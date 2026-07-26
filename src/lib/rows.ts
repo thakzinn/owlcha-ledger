@@ -19,10 +19,12 @@ export interface SheetRow {
   description: string;
   amount: number;
   channel: string;
+  /** คอลัมน์ F: ยอดขายบนแอป (ก่อนหัก GP) — เพิ่มตาม ADR §11.7, null = ไม่มีค่า */
+  gross: number | null;
 }
 
 export function normalizeRow(raw: readonly unknown[]): SheetRow {
-  const [rawDate, rawDesc, rawAmount, rawChannel] = raw;
+  const [rawDate, rawDesc, rawAmount, rawChannel, rawGross] = raw;
   const date =
     typeof rawDate === "number" && Number.isFinite(rawDate)
       ? serialToDateStr(rawDate)
@@ -36,6 +38,8 @@ export function normalizeRow(raw: readonly unknown[]): SheetRow {
     description: rawDesc == null ? "" : String(rawDesc),
     amount,
     channel: rawChannel == null ? "" : String(rawChannel),
+    gross:
+      typeof rawGross === "number" && Number.isFinite(rawGross) ? rawGross : null,
   };
 }
 
@@ -51,7 +55,7 @@ export function normalizeRows(raw: readonly unknown[][]): SheetRow[] {
 export function computeVersion(rows: readonly SheetRow[], date: string): string {
   const day = rows
     .filter((r) => r.date === date)
-    .map((r) => [r.description, r.amount, r.channel]);
+    .map((r) => [r.description, r.amount, r.channel, r.gross]);
   return createHash("sha256").update(JSON.stringify(day)).digest("hex");
 }
 

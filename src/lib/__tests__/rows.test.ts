@@ -33,6 +33,7 @@ describe("computeVersion — hash เฉพาะเนื้อหาแถว�
     description: "ชาไข่มุก",
     amount: -55,
     channel: "เงินสด",
+    gross: null,
     ...over,
   });
   const other: SheetRow = {
@@ -40,6 +41,7 @@ describe("computeVersion — hash เฉพาะเนื้อหาแถว�
     description: "น้ำแข็ง",
     amount: -100,
     channel: "โอน",
+    gross: null,
   };
 
   it("แถวสั้น/เต็มที่ค่าเท่ากัน → hash เดียวกัน (ผ่าน normalize)", () => {
@@ -57,6 +59,11 @@ describe("computeVersion — hash เฉพาะเนื้อหาแถว�
     const v2 = computeVersion([day({ amount: -56 })], D);
     expect(v1).not.toBe(v2);
   });
+  it("คอลัมน์ F (ยอดขายบนแอป) เปลี่ยน → version เปลี่ยน (ADR §11.7)", () => {
+    const v1 = computeVersion([day({ gross: null })], D);
+    const v2 = computeVersion([day({ gross: 2022.27 })], D);
+    expect(v1).not.toBe(v2);
+  });
   it("วันว่าง = hash ของ [] คงที่", () => {
     expect(computeVersion([], D)).toBe(computeVersion([other], D));
   });
@@ -68,6 +75,7 @@ describe("shouldDrawBorder (N5) — จำลองผลการลบก่�
     description: "",
     amount: 0,
     channel: "",
+    gross: null,
   });
 
   it("บันทึกวันล่าสุดซ้ำ: remaining ลงท้ายด้วยวันก่อนหน้า → วาดเส้น (เส้นไม่หาย)", () => {

@@ -84,7 +84,7 @@ async function readRows(api: sheets_v4.Sheets): Promise<SheetRow[]> {
   try {
     const res = await api.spreadsheets.values.get({
       spreadsheetId: env.SHEET_ID,
-      range: `'${env.SHEET_NAME}'!B${DATA_START_ROW}:E`,
+      range: `'${env.SHEET_NAME}'!B${DATA_START_ROW}:F`,
       majorDimension: "ROWS",
       valueRenderOption: "UNFORMATTED_VALUE",
       dateTimeRenderOption: "SERIAL_NUMBER",
@@ -98,7 +98,12 @@ async function readRows(api: sheets_v4.Sheets): Promise<SheetRow[]> {
 }
 
 export interface DayData {
-  entries: { description: string; amount: number; channel: string }[];
+  entries: {
+    description: string;
+    amount: number;
+    channel: string;
+    gross: number | null;
+  }[];
   version: string;
   /** วันที่ล่าสุดที่มีข้อมูลในชีต — ใช้แสดงคำเตือนแก้วันย้อนหลัง (D11) */
   latestDate: string | null;
@@ -110,7 +115,12 @@ export async function getDay(accessToken: string, date: string): Promise<DayData
   return {
     entries: rows
       .filter((r) => r.date === date)
-      .map(({ description, amount, channel }) => ({ description, amount, channel })),
+      .map(({ description, amount, channel, gross }) => ({
+        description,
+        amount,
+        channel,
+        gross,
+      })),
     version: computeVersion(rows, date),
     latestDate: rows.reduce<string | null>(
       (max, r) => (r.date && (!max || r.date > max) ? r.date : max),
@@ -206,8 +216,8 @@ export async function saveDay(
       });
     }
 
-    // เขียน B–E ที่ตำแหน่งแน่นอน: วันที่เป็น serial + numberFormat yyyy-mm-dd
-    // (สมมาตรกับการอ่านแบบ SERIAL_NUMBER — ไม่พึ่ง locale parsing, W5/N2)
+    // เขียน B–F ที่ตำแหน่งแน่นอน: วันที่เป็น serial + numberFormat, F = ยอดขายบนแอป
+    // (สมมาตรกับการอ่านแบบ SERIAL_NUMBER — ไม่พึ่ง locale parsing, W5/N2; F ตาม ADR §11.7)
     requests.push({
       updateCells: {
         start: { sheetId: tab.sheetId, rowIndex: startRowIndex, columnIndex: 1 },
@@ -223,6 +233,9 @@ export async function saveDay(
             { userEnteredValue: { stringValue: e.description } },
             { userEnteredValue: { numberValue: e.amount } },
             { userEnteredValue: { stringValue: e.channel } },
+            e.gross != null
+              ? { userEnteredValue: { numberValue: e.gross } }
+              : { userEnteredValue: { stringValue: "" } },
           ],
         })),
         fields: "userEnteredValue,userEnteredFormat.numberFormat",

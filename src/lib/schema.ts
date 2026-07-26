@@ -25,6 +25,17 @@ export const entrySchema = z.object({
     .pipe(z.string().max(200, "คำอธิบายยาวเกิน 200 ตัวอักษร")),
   amount: amountSchema,
   channel: z.enum(["เงินสด", "โอน"]),
+  /** คอลัมน์ F: ยอดขายบนแอป (ก่อนหัก GP) — เฉพาะรายรับเดลิเวอรี (ADR §11.7) */
+  gross: z
+    .number()
+    .finite()
+    .min(0, "ยอดขายบนแอปต้องไม่ติดลบ")
+    .max(99_999_999.99, "ยอดขายบนแอปเกินขอบเขตที่รองรับ")
+    .refine(
+      (a) => Math.abs(a * 100 - Math.round(a * 100)) < 1e-6,
+      "ยอดขายบนแอปต้องมีทศนิยมไม่เกิน 2 ตำแหน่ง",
+    )
+    .optional(),
 });
 
 export const saveEntriesSchema = z.object({
