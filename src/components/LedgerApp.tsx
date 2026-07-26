@@ -384,38 +384,96 @@ export default function LedgerApp({ email }: { email: string }) {
       version: string;
     };
 
-    // สร้างรายการเปรียบเทียบด้วย DOM API + textContent เท่านั้น (กัน XSS)
+    // ตารางเปรียบเทียบเก่า/ใหม่ ด้วย DOM API + textContent เท่านั้น (กัน XSS)
+    // แถวที่ค่าต่างกันถูกไฮไลต์ — ปุ่ม "เขียนทับ" ไม่ใช่ default
     const box = document.createElement("div");
     box.style.textAlign = "left";
-    const head = document.createElement("p");
-    head.textContent = `ข้อมูลวันนี้บนชีตตอนนี้ (${server.entries.length} รายการ):`;
-    head.style.fontWeight = "600";
-    box.appendChild(head);
-    const ul = document.createElement("ul");
-    ul.style.margin = "8px 0 12px 20px";
-    ul.style.listStyle = "disc";
-    for (const e of server.entries.slice(0, 15)) {
-      const li = document.createElement("li");
-      li.textContent = `${e.amount < 0 ? "รายจ่าย" : "รายรับ"} ${
-        e.description || "(ไม่มีคำอธิบาย)"
-      } ${fmt(e.amount)} ฿ (${e.channel})`;
-      ul.appendChild(li);
+
+    const entryText = (e?: SummaryEntry): string =>
+      e
+        ? `${e.amount < 0 ? "รายจ่าย" : "รายรับ"} · ${e.description || "(ไม่มีคำอธิบาย)"} · ${fmt(e.amount)} ฿ · ${e.channel}`
+        : "—";
+    const sameEntry = (a?: SummaryEntry, b?: SummaryEntry): boolean =>
+      !!a &&
+      !!b &&
+      a.description === b.description &&
+      a.amount === b.amount &&
+      a.channel === b.channel;
+
+    const table = document.createElement("table");
+    table.className = "w-full border-collapse text-xs";
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const label of ["#", "บนชีตตอนนี้", "ของคุณ (จะเขียนทับ)"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      th.className = "border border-gray-300 bg-gray-100 px-2 py-1 text-center";
+      headRow.appendChild(th);
     }
-    if (server.entries.length > 15) {
-      const li = document.createElement("li");
-      li.textContent = `…และอีก ${server.entries.length - 15} รายการ`;
-      ul.appendChild(li);
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    const maxRows = Math.max(server.entries.length, payload.length);
+    const shown = Math.min(maxRows, 20);
+    for (let i = 0; i < shown; i++) {
+      const s = server.entries[i];
+      const m = payload[i];
+      const same = sameEntry(s, m);
+      const tr = document.createElement("tr");
+
+      const num = document.createElement("td");
+      num.textContent = String(i + 1);
+      num.className = "border border-gray-300 px-2 py-1 text-center text-gray-500";
+      tr.appendChild(num);
+
+      for (const e of [s, m]) {
+        const td = document.createElement("td");
+        td.textContent = entryText(e);
+        td.className = `border border-gray-300 px-2 py-1 ${
+          same ? "text-gray-700" : "bg-amber-50 font-medium text-red-700"
+        }`;
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
     }
-    if (!server.entries.length) {
-      const p = document.createElement("p");
-      p.textContent = "(ไม่มีรายการ — ข้อมูลของวันนี้ถูกลบไปแล้ว)";
-      box.appendChild(p);
-    } else {
-      box.appendChild(ul);
+    if (maxRows > shown) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 3;
+      td.textContent = `…และอีก ${maxRows - shown} แถว`;
+      td.className = "border border-gray-300 px-2 py-1 text-center text-gray-500";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
     }
-    const mine = document.createElement("p");
-    mine.textContent = `ของคุณที่กำลังจะบันทึก: ${payload.length} รายการ — ถ้า "เขียนทับ" ข้อมูลบนชีตด้านบนจะถูกแทนที่ทั้งหมด`;
-    box.appendChild(mine);
+    table.appendChild(tbody);
+
+    // แถวสรุปยอดคงเหลือของทั้งสองฝั่ง
+    const sum = (list: SummaryEntry[]) => list.reduce((t, e) => t + e.amount, 0);
+    const tfoot = document.createElement("tfoot");
+    const footRow = document.createElement("tr");
+    const footLabel = document.createElement("td");
+    footLabel.textContent = "รวม";
+    footLabel.className = "border border-gray-300 bg-gray-50 px-2 py-1 text-center font-semibold";
+    footRow.appendChild(footLabel);
+    for (const list of [server.entries, payload]) {
+      const td = document.createElement("td");
+      td.textContent = `${fmt(sum(list))} ฿ (${list.length} รายการ)`;
+      td.className = "border border-gray-300 bg-gray-50 px-2 py-1 text-right font-semibold";
+      footRow.appendChild(td);
+    }
+    tfoot.appendChild(footRow);
+    table.appendChild(tfoot);
+
+    const note = document.createElement("p");
+    note.textContent =
+      server.entries.length === 0
+        ? "บนชีตไม่มีรายการของวันนี้แล้ว (ถูกลบจากที่อื่น) — เลือกว่าจะเขียนของคุณลงไปหรือโหลดใหม่"
+        : 'แถวสีเหลือง = ค่าไม่ตรงกัน — "เขียนทับ" จะแทนที่ฝั่งซ้ายด้วยฝั่งขวาทั้งวัน';
+    note.className = "mt-2 text-xs text-gray-600";
+
+    box.appendChild(table);
+    box.appendChild(note);
 
     const choice = await Swal.fire({
       icon: "warning",
@@ -509,7 +567,8 @@ export default function LedgerApp({ email }: { email: string }) {
               setDate(d);
               if (d) void loadDay(d);
             }}
-            className="w-full rounded-lg border border-gray-300 px-4 py-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+            className="block w-full min-w-0 max-w-full appearance-none rounded-lg border border-gray-300 px-4 py-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+            style={{ WebkitAppearance: "none" }}
           />
         </div>
       </div>
@@ -551,66 +610,6 @@ export default function LedgerApp({ email }: { email: string }) {
                 <option>เงินสด</option>
                 <option>โอน</option>
               </select>
-              {e.type === "income" &&
-                isDeliveryDesc(e.description) &&
-                (parseFloat(e.amount) || 0) > 0 &&
-                (() => {
-                  const gpPct = e.gpPct ?? DEFAULT_GP_PCT;
-                  const vatPct = e.vatPct ?? DEFAULT_VAT_PCT;
-                  const b = gpBreakdownFromNet(
-                    parseFloat(e.amount),
-                    parseFloat(gpPct) || 0,
-                    parseFloat(vatPct) || 0,
-                  );
-                  const pctInput =
-                    "w-10 rounded border border-gray-200 bg-white px-1 py-0 text-right text-[11px] text-gray-700";
-                  return (
-                    <div className="ml-1 min-w-0 flex-1 self-center text-right text-[11px] leading-snug text-gray-500">
-                      <p className="mb-1 flex items-center justify-end gap-1.5 whitespace-nowrap">
-                        <span className="text-xs">ยอดขายบนแอป</span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          aria-label="ยอดขายบนแอป (บันทึกลงคอลัมน์ F)"
-                          value={e.gross ?? (b ? b.gross.toFixed(2) : "")}
-                          disabled={busy}
-                          onChange={(ev) =>
-                            // แก้เองได้ — ไม่คำนวณย้อนกลับไปกระทบยอดสุทธิ/GP/VAT
-                            update(e.id, { gross: sanitizeAmount(ev.target.value) })
-                          }
-                          className="w-28 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-right text-sm font-medium text-gray-800"
-                        />
-                      </p>
-                      <p className="flex items-center justify-end gap-1 whitespace-nowrap">
-                        <span>ค่า GP</span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          aria-label="เปอร์เซ็นต์ GP"
-                          value={gpPct}
-                          disabled={busy}
-                          onChange={(ev) =>
-                            update(e.id, { gpPct: sanitizeAmount(ev.target.value) })
-                          }
-                          className={pctInput}
-                        />
-                        <span>% {b ? fmt(b.gpAmt) : "—"} · VAT</span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          aria-label="เปอร์เซ็นต์ VAT บนค่า GP"
-                          value={vatPct}
-                          disabled={busy}
-                          onChange={(ev) =>
-                            update(e.id, { vatPct: sanitizeAmount(ev.target.value) })
-                          }
-                          className={pctInput}
-                        />
-                        <span>% {b ? fmt(b.vatAmt) : "—"}</span>
-                      </p>
-                    </div>
-                  );
-                })()}
               <button
                 type="button"
                 aria-label="ลบรายการ"
@@ -649,6 +648,70 @@ export default function LedgerApp({ email }: { email: string }) {
                 }`}
               />
             </div>
+
+            {/* breakdown GP — แถบเต็มความกว้างของการ์ด (แก้ปัญหาซ้อนกันบนมือถือ) */}
+            {e.type === "income" &&
+              isDeliveryDesc(e.description) &&
+              (parseFloat(e.amount) || 0) > 0 &&
+              (() => {
+                const gpPct = e.gpPct ?? DEFAULT_GP_PCT;
+                const vatPct = e.vatPct ?? DEFAULT_VAT_PCT;
+                const b = gpBreakdownFromNet(
+                  parseFloat(e.amount),
+                  parseFloat(gpPct) || 0,
+                  parseFloat(vatPct) || 0,
+                );
+                const pctInput =
+                  "w-12 rounded-lg border border-gray-300 bg-white px-1.5 py-1 text-right text-sm text-gray-800";
+                return (
+                  <div className="mt-2 rounded-lg bg-gray-50 p-2 text-xs text-gray-600">
+                    <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                      <span>ยอดขายบนแอป (ลงคอลัมน์ F)</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="ยอดขายบนแอป (บันทึกลงคอลัมน์ F)"
+                        value={e.gross ?? (b ? b.gross.toFixed(2) : "")}
+                        disabled={busy}
+                        onChange={(ev) =>
+                          // แก้เองได้ — ไม่คำนวณย้อนกลับไปกระทบยอดสุทธิ/GP/VAT
+                          update(e.id, { gross: sanitizeAmount(ev.target.value) })
+                        }
+                        className="w-32 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-right text-base font-medium text-gray-900"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+                      <span>ค่า GP</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="เปอร์เซ็นต์ GP"
+                        value={gpPct}
+                        disabled={busy}
+                        onChange={(ev) =>
+                          update(e.id, { gpPct: sanitizeAmount(ev.target.value) })
+                        }
+                        className={pctInput}
+                      />
+                      <span>% = {b ? fmt(b.gpAmt) : "—"}</span>
+                      <span className="text-gray-400">·</span>
+                      <span>VAT</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label="เปอร์เซ็นต์ VAT บนค่า GP"
+                        value={vatPct}
+                        disabled={busy}
+                        onChange={(ev) =>
+                          update(e.id, { vatPct: sanitizeAmount(ev.target.value) })
+                        }
+                        className={pctInput}
+                      />
+                      <span>% = {b ? fmt(b.vatAmt) : "—"}</span>
+                    </div>
+                  </div>
+                );
+              })()}
           </div>
         ))}
       </div>
