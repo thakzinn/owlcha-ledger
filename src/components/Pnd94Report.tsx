@@ -125,6 +125,13 @@ export default function Pnd94Report() {
     [rows],
   );
 
+  /** สรุปครบทุกช่องทาง — ใช้แสดงแถวในตาราง (แถวที่ un-check ต้องยังเห็น แค่ blur) */
+  const fullSummary = useMemo(
+    () => summarize(entries, rates, range.from, range.to),
+    [entries, rates, range],
+  );
+
+  /** สรุปเฉพาะช่องทางที่ติ๊กเลือก — ใช้กับแถวรวม, กล่องภาษี, หมายเหตุประมาณการ และ CSV */
   const summary = useMemo(
     () =>
       summarize(
@@ -658,29 +665,6 @@ export default function Pnd94Report() {
       {/* 5. ตารางสรุปตามช่องทาง */}
       <section className="rounded-xl bg-white p-4 shadow">
         <h2 className="mb-3 font-semibold text-gray-800">สรุปตามช่องทาง</h2>
-        <div className="mb-3 flex flex-wrap gap-x-4 gap-y-2">
-          {CHANNELS.map((c) => (
-            <label
-              key={c}
-              className={`flex cursor-pointer items-center gap-1.5 text-sm ${
-                selectedChannels[c] ? "text-gray-800" : "text-gray-400 line-through"
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={selectedChannels[c]}
-                onChange={(e) =>
-                  setSelectedChannels((prev) => ({
-                    ...prev,
-                    [c]: e.target.checked,
-                  }))
-                }
-                className="h-4 w-4 accent-amber-500"
-              />
-              {c}
-            </label>
-          ))}
-        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] border border-gray-300 text-sm">
             <thead>
@@ -701,31 +685,47 @@ export default function Pnd94Report() {
               </tr>
             </thead>
             <tbody>
-              {summary.rows.map((r) => (
-                <tr key={r.channel}>
-                  <td className="border border-gray-300 px-2 py-1">
-                    {r.channel}
-                  </td>
-                  <td className="border border-gray-300 px-2 py-1 text-center">
-                    {r.count}
-                  </td>
-                  <td className="border border-gray-300 px-2 py-1 text-right">
-                    {fmtBaht(r.gross)}
-                  </td>
-                  <td className="border border-gray-300 px-2 py-1 text-right">
-                    {fmtBaht(r.gp)}
-                  </td>
-                  <td className="border border-gray-300 px-2 py-1 text-right">
-                    {fmtBaht(r.vat)}
-                  </td>
-                  <td className="border border-gray-300 px-2 py-1 text-right">
-                    {fmtBaht(r.deduction)}
-                  </td>
-                  <td className="border border-gray-300 px-2 py-1 text-right">
-                    {fmtBaht(r.net)}
-                  </td>
-                </tr>
-              ))}
+              {fullSummary.rows.map((r) => {
+                const on = selectedChannels[r.channel];
+                // แถวที่ un-check ต้องยังเห็นอยู่ (แค่ blur) — ห้ามหายจากตาราง
+                const numCls = `border border-gray-300 px-2 py-1 text-right ${
+                  on ? "" : "opacity-40 blur-[1.5px] select-none"
+                }`;
+                return (
+                  <tr key={r.channel} className={on ? "" : "bg-gray-50"}>
+                    <td className="border border-gray-300 px-2 py-1">
+                      <label className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) =>
+                            setSelectedChannels((prev) => ({
+                              ...prev,
+                              [r.channel]: e.target.checked,
+                            }))
+                          }
+                          className="h-4 w-4 accent-amber-500"
+                        />
+                        <span className={on ? "" : "text-gray-400 line-through"}>
+                          {r.channel}
+                        </span>
+                      </label>
+                    </td>
+                    <td
+                      className={`border border-gray-300 px-2 py-1 text-center ${
+                        on ? "" : "opacity-40 blur-[1.5px] select-none"
+                      }`}
+                    >
+                      {r.count}
+                    </td>
+                    <td className={numCls}>{fmtBaht(r.gross)}</td>
+                    <td className={numCls}>{fmtBaht(r.gp)}</td>
+                    <td className={numCls}>{fmtBaht(r.vat)}</td>
+                    <td className={numCls}>{fmtBaht(r.deduction)}</td>
+                    <td className={numCls}>{fmtBaht(r.net)}</td>
+                  </tr>
+                );
+              })}
               <tr className="bg-gray-50 font-semibold">
                 <td className="border border-gray-300 px-2 py-1">รวมทั้งหมด</td>
                 <td className="border border-gray-300 px-2 py-1 text-center">
