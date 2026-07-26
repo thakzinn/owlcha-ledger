@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { dateSchema, entrySchema, saveEntriesSchema, notifySchema } from "@/lib/schema";
+import {
+  dateSchema,
+  entrySchema,
+  saveEntriesSchema,
+  notifySchema,
+  rangeQuerySchema,
+} from "@/lib/schema";
 import { typeFromAmount, toSignedAmount } from "@/lib/entries";
 
 const entry = { description: "ชาไข่มุก", amount: -55.5, channel: "เงินสด" as const };
@@ -47,6 +53,24 @@ describe("saveEntriesSchema", () => {
   });
   it("baseVersion ต้องเป็น sha256 hex", () => {
     expect(saveEntriesSchema.safeParse({ ...base, baseVersion: "xyz" }).success).toBe(false);
+  });
+});
+
+describe("rangeQuerySchema (GET /api/entries/range — ADR §11.8)", () => {
+  it("ช่วงถูกต้อง → ผ่าน (รวมวันเดียวกัน)", () => {
+    expect(rangeQuerySchema.safeParse({ from: "2026-01-01", to: "2026-06-30" }).success).toBe(true);
+    expect(rangeQuerySchema.safeParse({ from: "2026-01-01", to: "2026-01-01" }).success).toBe(true);
+  });
+  it("from > to → ไม่ผ่าน", () => {
+    expect(rangeQuerySchema.safeParse({ from: "2026-06-30", to: "2026-01-01" }).success).toBe(false);
+  });
+  it("รูปแบบวันที่ผิด → ไม่ผ่าน", () => {
+    expect(rangeQuerySchema.safeParse({ from: "01/01/2026", to: "2026-06-30" }).success).toBe(false);
+    expect(rangeQuerySchema.safeParse({ from: "2026-02-30", to: "2026-06-30" }).success).toBe(false);
+  });
+  it("ช่วงเกิน 366 วัน → ไม่ผ่าน (ปีเต็มยังผ่าน)", () => {
+    expect(rangeQuerySchema.safeParse({ from: "2026-01-01", to: "2026-12-31" }).success).toBe(true);
+    expect(rangeQuerySchema.safeParse({ from: "2025-01-01", to: "2026-06-30" }).success).toBe(false);
   });
 });
 

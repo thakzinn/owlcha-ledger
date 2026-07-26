@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/lib/auth";
 import { absoluteMaxSec } from "@/lib/constants";
@@ -42,6 +43,15 @@ export default async function Home() {
       <h1 className="mb-4 text-center text-xl font-semibold text-gray-800">
         บันทึกรายการรายรับ-รายจ่าย 🦉🍵
       </h1>
+
+      <p className="mb-4 text-center">
+        <Link
+          href="/report-pnd94"
+          className="text-sm font-medium text-amber-600 underline hover:text-amber-700"
+        >
+          รายงานภาษี ภ.ง.ด.94
+        </Link>
+      </p>
 
       <LedgerApp email={email} />
     </main>

@@ -129,6 +129,39 @@ export async function getDay(accessToken: string, date: string): Promise<DayData
   };
 }
 
+// ---------- อ่านช่วงวันที่ (หน้ารายงาน ภ.ง.ด.94 — read-only, ADR §11.8) ----------
+
+export interface RangeEntry {
+  date: string;
+  description: string;
+  amount: number;
+  channel: string;
+  gross: number | null;
+}
+
+/** รายรับทุกแถว (amount ≥ 0) ในช่วง [from, to] — ไม่มี version/conflict เพราะไม่มีการเขียน */
+export async function getRange(
+  accessToken: string,
+  from: string,
+  to: string,
+): Promise<{ entries: RangeEntry[] }> {
+  const rows = await readRows(sheetsClient(accessToken));
+  return {
+    entries: rows
+      .filter(
+        (r): r is SheetRow & { date: string } =>
+          r.date !== null && r.date >= from && r.date <= to && r.amount >= 0,
+      )
+      .map(({ date, description, amount, channel, gross }) => ({
+        date,
+        description,
+        amount,
+        channel,
+        gross,
+      })),
+  };
+}
+
 // ---------- รายการที่เคยใช้ (autocomplete) ----------
 
 let descCache: { data: string[]; at: number } | null = null;

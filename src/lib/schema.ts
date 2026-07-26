@@ -48,6 +48,19 @@ export const saveEntriesSchema = z.object({
   baseVersion: z.string().regex(/^[0-9a-f]{64}$/, "baseVersion ไม่ถูกต้อง"),
 });
 
+/** query ของ GET /api/entries/range — ช่วงวันที่สำหรับหน้ารายงาน ภ.ง.ด.94 (ADR §11.8) */
+export const rangeQuerySchema = z
+  .object({ from: dateSchema, to: dateSchema })
+  .refine((r) => r.from <= r.to, "ช่วงวันที่ไม่ถูกต้อง (from ต้องไม่เกิน to)")
+  .refine(
+    (r) =>
+      (new Date(`${r.to}T00:00:00Z`).getTime() -
+        new Date(`${r.from}T00:00:00Z`).getTime()) /
+        86_400_000 <=
+      366,
+    "ช่วงวันที่ต้องไม่เกิน 366 วัน",
+  );
+
 /** ~8MB ของ PNG จริง ≈ base64 ~11M ตัวอักษร */
 export const notifySchema = z.object({
   date: dateSchema,
