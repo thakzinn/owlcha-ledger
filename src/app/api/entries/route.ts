@@ -7,17 +7,13 @@ import {
   getDay,
   saveDay,
   ConflictError,
-  NeedsPickerError,
+  SheetAccessError,
   SheetNotFoundError,
 } from "@/lib/sheets";
 
 function mapSheetError(err: unknown): NextResponse {
-  if (err instanceof NeedsPickerError) {
-    return jsonError(
-      403,
-      "NEEDS_PICKER",
-      "ยังไม่ได้ให้สิทธิ์เข้าถึงไฟล์ชีต กรุณาเลือกไฟล์ในหน้าตั้งค่า",
-    );
+  if (err instanceof SheetAccessError) {
+    return jsonError(403, "SHEET_ACCESS", err.message);
   }
   if (err instanceof SheetNotFoundError) {
     return jsonError(500, "SHEET_NAME_MISMATCH", err.message);

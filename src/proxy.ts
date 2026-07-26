@@ -17,17 +17,15 @@ const PUBLIC_PAGES = new Set(["/login"]);
 function buildCsp(nonce: string): string {
   return [
     `default-src 'self'`,
-    // nonce + strict-dynamic คือด่านกัน XSS จริง; apis.google.com สำหรับ Google Picker
-    // (browser ที่รองรับ strict-dynamic จะ ignore host allowlist — script ของ Picker
-    //  ต้องใส่ nonce ที่แท็ก ส่วน host คงไว้เป็น fallback ของ browser เก่า)
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://apis.google.com`,
+    // nonce + strict-dynamic คือด่านกัน XSS จริง (ไม่มี external script แล้ว
+    // หลังตัด Google Picker ออกตาม ADR §11.6)
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     // 'unsafe-inline' เฉพาะ style — จำเป็นสำหรับ SweetAlert2 (Accepted Risk R-10 ใน ADR-001)
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' blob: data: https://lh3.googleusercontent.com`,
     `font-src 'self'`,
     `connect-src 'self'`,
-    // Google Picker เปิด iframe จาก docs.google.com
-    `frame-src https://docs.google.com`,
+    `frame-src 'none'`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,

@@ -9,8 +9,6 @@ const envSchema = z.object({
   AUTH_GOOGLE_ID: z.string().min(1),
   AUTH_GOOGLE_SECRET: z.string().min(1),
   ALLOWED_EMAILS: z.string().min(1),
-  NEXT_PUBLIC_GOOGLE_PICKER_API_KEY: z.string().min(1),
-  NEXT_PUBLIC_GOOGLE_CLIENT_ID: z.string().min(1),
   SHEET_ID: z.string().min(1),
   SHEET_NAME: z.string().min(1),
   TELEGRAM_BOT_TOKEN: z.string().min(1),

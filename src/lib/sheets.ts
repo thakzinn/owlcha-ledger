@@ -20,8 +20,14 @@ import type { EntryInput } from "@/lib/schema";
  * ทำให้ความเสี่ยงนี้ "สูงขึ้น" ไม่ใช่ต่ำลง — ห้ามถอดกลไกนี้ออก (ADR-001 §11.2)
  */
 
-/** ผู้ใช้ยังไม่ได้ให้สิทธิ์ไฟล์ผ่าน Picker (Google ตอบ 403/404) → client ต้องพาไป /setup */
-export class NeedsPickerError extends Error {}
+/** Google ตอบ 403/404 = บัญชีผู้ใช้ไม่มีสิทธิ์ในไฟล์ชีต (ต้องถูกแชร์ไฟล์แบบ Editor) */
+export class SheetAccessError extends Error {
+  constructor() {
+    super(
+      "บัญชีของคุณยังไม่มีสิทธิ์แก้ไขไฟล์ชีตของร้าน กรุณาให้เจ้าของร้านแชร์ไฟล์ให้ก่อน",
+    );
+  }
+}
 /** ข้อมูลวันนั้นเปลี่ยนไปแล้วนับจากตอนผู้ใช้โหลด → 409 ห้ามเขียนทับเงียบ ๆ */
 export class ConflictError extends Error {}
 /** หาแท็บชื่อตาม SHEET_NAME ไม่เจอ — ชื่อแท็บในชีตจริงไม่ตรงกับ env */
@@ -39,7 +45,7 @@ function sheetsClient(accessToken: string): sheets_v4.Sheets {
   return google.sheets({ version: "v4", auth: oauth });
 }
 
-function isPickerNeeded(err: unknown): boolean {
+function isAccessDenied(err: unknown): boolean {
   const status =
     typeof err === "object" && err !== null
       ? Number((err as { status?: number; code?: number }).status ?? (err as { code?: number }).code)
@@ -86,7 +92,7 @@ async function readRows(api: sheets_v4.Sheets): Promise<SheetRow[]> {
     return normalizeRows((res.data.values ?? []) as unknown[][]);
   } catch (err) {
     if (err instanceof SheetNotFoundError) throw err;
-    if (isPickerNeeded(err)) throw new NeedsPickerError();
+    if (isAccessDenied(err)) throw new SheetAccessError();
     throw err;
   }
 }
@@ -249,7 +255,7 @@ export async function saveDay(
     await doBatch(await resolveTab(api));
   } catch (err) {
     if (err instanceof SheetNotFoundError) throw err;
-    if (isPickerNeeded(err)) throw new NeedsPickerError();
+    if (isAccessDenied(err)) throw new SheetAccessError();
     // re-resolve gid แล้วลองซ้ำ 1 ครั้งเท่านั้น (N6) — กันวนไม่จบเมื่อล้มด้วยเหตุอื่น
     await doBatch(await resolveTab(api, true));
   }

@@ -4,9 +4,11 @@ import { env, allowedEmails } from "@/lib/env";
 import { IDLE_MAX_SEC } from "@/lib/constants";
 
 /**
- * Auth.js v5 — Google provider เท่านั้น (ADR-001 D3–D8)
+ * Auth.js v5 — Google provider เท่านั้น (ADR-001 D3–D8, D4 แก้ไขตาม §11.6)
  *
- * - scope `drive.file` (non-sensitive) — เข้าถึงเฉพาะไฟล์ที่ผู้ใช้เลือกผ่าน Picker
+ * - scope `spreadsheets` (sensitive) — เจ้าของระบบตัดสินใจสลับจาก `drive.file`
+ *   เมื่อ 2026-07-26 เพื่อตัดขั้นตอน Picker; ใช้ได้ใต้สถานะ Testing โดยไม่ต้อง
+ *   ผ่าน verification (ดู ADR-001 §11.6)
  * - access_type=offline + prompt=consent ทุกครั้ง — มิฉะนั้น Google ไม่ออก
  *   refresh token ตัวใหม่ในการอนุญาตครั้งถัดไป (จำเป็นต่อ session policy D8)
  * - authTime ถูกเขียน "ครั้งเดียว" ตอน sign-in และห้ามแก้ — เป็นฐานของ absolute cap
@@ -31,7 +33,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       authorization: {
         params: {
           scope:
-            "openid email profile https://www.googleapis.com/auth/drive.file",
+            "openid email profile https://www.googleapis.com/auth/spreadsheets",
           access_type: "offline",
           prompt: "consent",
         },
@@ -108,8 +110,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
 
     // สิ่งที่ client เห็นผ่าน /api/auth/session — จงใจ "ไม่" ใส่ access/refresh token
-    // (token ใช้ฝั่ง server ผ่าน getToken ใน guard.ts; ส่งให้ browser เฉพาะหน้า /setup
-    //  ผ่าน server component ตาม Accepted Risk R-6)
+    // (token ใช้เฉพาะฝั่ง server ผ่าน getToken ใน guard.ts — ไม่มีเหตุให้ browser เห็นอีก
+    //  หลังตัด Picker ออกตาม ADR §11.6)
     session({ session, token }) {
       session.authTime = token.authTime;
       if (token.error) session.error = token.error;

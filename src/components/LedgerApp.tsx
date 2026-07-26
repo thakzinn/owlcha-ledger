@@ -63,11 +63,6 @@ export default function LedgerApp({ email }: { email: string }) {
   const handleApiFailure = useCallback(
     async (res: Response): Promise<string> => {
       const body = (await res.json().catch(() => ({}))) as ApiError;
-      const code = body.error?.code;
-      if (code === "NEEDS_PICKER") {
-        router.push("/setup");
-        return "";
-      }
       if (res.status === 401) {
         router.push("/login?reason=expired");
         return "";

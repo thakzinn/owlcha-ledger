@@ -11,7 +11,7 @@
 - Node.js 24.x (`.nvmrc`, `engines`)
 - Tailwind CSS 4.3 (build จริง — ไม่ใช้ CDN)
 - Auth.js v5 (`next-auth@5.0.0-beta.32` pin ตายตัว — ดู ADR R-9)
-- Google Sheets API ผ่าน token ของผู้ใช้ (scope `drive.file` + Google Picker)
+- Google Sheets API ผ่าน token ของผู้ใช้ (scope `spreadsheets` — ดู ADR §11.6)
 - zod / sweetalert2 / html2canvas-pro (dynamic import) / vitest
 
 ## เริ่มพัฒนา
