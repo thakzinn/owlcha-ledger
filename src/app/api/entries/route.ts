@@ -18,7 +18,13 @@ function mapSheetError(err: unknown): NextResponse {
   if (err instanceof SheetNotFoundError) {
     return jsonError(500, "SHEET_NAME_MISMATCH", err.message);
   }
-  console.error("[entries] sheet error"); // ไม่ log รายละเอียด — อาจมีข้อมูล request ปน
+  // log เฉพาะ status code — พอสำหรับวินิจฉัย ไม่มี payload/token ปน
+  const status =
+    typeof err === "object" && err !== null
+      ? ((err as { status?: number; code?: number }).status ??
+        (err as { code?: number }).code)
+      : undefined;
+  console.error(`[entries] sheet error status=${status ?? "unknown"}`);
   return jsonError(500, "INTERNAL", "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
 }
 

@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { env, allowedEmails } from "@/lib/env";
 import { IDLE_MAX_SEC } from "@/lib/constants";
+import { refreshGoogleToken } from "@/lib/google-refresh";
 
 /**
  * Auth.js v5 — Google provider เท่านั้น (ADR-001 D3–D8, D4 แก้ไขตาม §11.6)
@@ -66,47 +67,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       // refresh access token — ล้มเหลว (รวม invalid_grant: ผู้ใช้ถอนสิทธิ์/
       // Google เพิกถอน/เปลี่ยนรหัสผ่าน) → ทำเครื่องหมายให้ guard พาไปล็อกอินใหม่
+      // (guard.ts ก็ refresh เองด้วยผ่าน helper เดียวกัน เพราะ getToken ไม่รัน callback นี้)
       if (!token.refreshToken) {
         token.error = "RefreshTokenError";
         return token;
       }
-      try {
-        const res = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            client_id: env.AUTH_GOOGLE_ID,
-            client_secret: env.AUTH_GOOGLE_SECRET,
-            grant_type: "refresh_token",
-            refresh_token: token.refreshToken,
-          }),
-        });
-        const data: unknown = await res.json();
-        if (!res.ok) {
-          // ห้าม log รายละเอียด (อาจมี token ปน) — log เฉพาะ error code
-          const code =
-            typeof data === "object" && data !== null && "error" in data
-              ? String((data as { error: unknown }).error)
-              : "unknown";
-          console.error(`[auth] refresh token failed: ${code}`);
-          token.error = "RefreshTokenError";
-          return token;
-        }
-        const refreshed = data as {
-          access_token: string;
-          expires_in: number;
-          refresh_token?: string;
-        };
-        token.accessToken = refreshed.access_token;
-        token.expiresAt = Math.floor(Date.now() / 1000) + refreshed.expires_in;
-        if (refreshed.refresh_token) token.refreshToken = refreshed.refresh_token;
-        delete token.error;
-        return token;
-      } catch {
-        console.error("[auth] refresh token failed: network error");
+      const refreshed = await refreshGoogleToken(token.refreshToken);
+      if (!refreshed) {
         token.error = "RefreshTokenError";
         return token;
       }
+      token.accessToken = refreshed.accessToken;
+      token.expiresAt = refreshed.expiresAt;
+      if (refreshed.refreshToken) token.refreshToken = refreshed.refreshToken;
+      delete token.error;
+      return token;
     },
 
     // สิ่งที่ client เห็นผ่าน /api/auth/session — จงใจ "ไม่" ใส่ access/refresh token

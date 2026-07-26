@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getToken, type JWT } from "next-auth/jwt";
 import { env, allowedEmails } from "@/lib/env";
 import { absoluteMaxSec } from "@/lib/constants";
+import { refreshGoogleToken } from "@/lib/google-refresh";
 
 /**
  * ด่านตรวจสิทธิ์ "จริง" ของทุก API route — ทุก handler ต้องเรียกเองเสมอ
@@ -80,6 +81,35 @@ export async function requireSession(req: NextRequest): Promise<GuardResult> {
         "เซสชันครบกำหนดตามนโยบายความปลอดภัย กรุณาเข้าสู่ระบบใหม่",
       ),
     };
+  }
+
+  // access token ของ Google อายุ ~1 ชม. — getToken ไม่รัน jwt callback ของ Auth.js
+  // จึงต้อง refresh เองที่นี่ (per-request, ไม่เขียนกลับ cookie — ต้นทุน ~200ms
+  // เฉพาะ request แรกหลังหมดอายุ ยอมรับได้สำหรับผู้ใช้ 5 คน)
+  if (!token.accessToken || !token.expiresAt || now >= token.expiresAt - 60) {
+    if (!token.refreshToken) {
+      return {
+        ok: false,
+        response: errorResponse(
+          401,
+          "SESSION_EXPIRED",
+          "การเชื่อมต่อกับ Google หมดอายุ กรุณาเข้าสู่ระบบใหม่",
+        ),
+      };
+    }
+    const refreshed = await refreshGoogleToken(token.refreshToken);
+    if (!refreshed) {
+      return {
+        ok: false,
+        response: errorResponse(
+          401,
+          "SESSION_EXPIRED",
+          "การเชื่อมต่อกับ Google หมดอายุ กรุณาเข้าสู่ระบบใหม่",
+        ),
+      };
+    }
+    token.accessToken = refreshed.accessToken;
+    token.expiresAt = refreshed.expiresAt;
   }
 
   return { ok: true, token, email };
