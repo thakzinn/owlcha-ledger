@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getToken } from "next-auth/jwt";
+import { env } from "@/lib/env";
+import { absoluteMaxSec } from "@/lib/constants";
 
 /**
- * ชั้นป้องกันเสริมสำหรับ page routes เท่านั้น — การตรวจ session จริงอยู่ใน
- * lib/guard.ts ซึ่งทุก route handler ต้องเรียกเองเสมอ (กัน pattern ของ
- * CVE-2025-29927: ห้ามพึ่ง proxy/middleware เป็นด่านตรวจสิทธิ์เพียงด่านเดียว)
+ * ชั้นป้องกัน "เสริม" สำหรับ page routes + ตั้ง CSP ต่อ request เท่านั้น —
+ * การตรวจสิทธิ์จริงของ API ทุกเส้นอยู่ใน lib/guard.ts ซึ่ง route handler
+ * ต้องเรียกเองเสมอ (กัน pattern ของ CVE-2025-29927: ห้ามพึ่ง proxy/middleware
+ * เป็นด่านตรวจสิทธิ์เพียงด่านเดียว)
  *
- * CSP ใช้ nonce ต่อ request → ทุกหน้าเป็น dynamic render โดยตั้งใจ
- * (ทุกหน้าอยู่หลัง auth จึงเป็น dynamic โดยธรรมชาติอยู่แล้ว — ดู ADR-001 §11.4)
+ * CSP ใช้ nonce ต่อ request → ทุกหน้าเป็น dynamic render โดยตั้งใจ (ADR-001 §11.4)
  */
-export default function proxy(request: NextRequest) {
-  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
 
-  const csp = [
+const PUBLIC_PAGES = new Set(["/login"]);
+
+function buildCsp(nonce: string): string {
+  return [
     `default-src 'self'`,
     // nonce + strict-dynamic คือด่านกัน XSS จริง; apis.google.com สำหรับ Google Picker
     // (browser ที่รองรับ strict-dynamic จะ ignore host allowlist — script ของ Picker
@@ -29,6 +33,44 @@ export default function proxy(request: NextRequest) {
     `form-action 'self'`,
     `frame-ancestors 'none'`,
   ].join("; ");
+}
+
+async function sessionAllowsPage(request: NextRequest): Promise<boolean> {
+  const secureCookie = request.nextUrl.protocol === "https:";
+  const cookieName = secureCookie
+    ? "__Secure-authjs.session-token"
+    : "authjs.session-token";
+  try {
+    const token = await getToken({
+      req: request,
+      secret: env.AUTH_SECRET,
+      secureCookie,
+      cookieName,
+      salt: cookieName,
+    });
+    if (!token || token.error === "RefreshTokenError") return false;
+    const now = Math.floor(Date.now() / 1000);
+    return !!token.authTime && now - token.authTime < absoluteMaxSec();
+  } catch {
+    return false;
+  }
+}
+
+export default async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // page routes (ไม่ใช่ /api) ที่ไม่ public → ต้องมี session ที่ยังไม่ชน absolute cap
+  const isApi = pathname.startsWith("/api");
+  if (!isApi && !PUBLIC_PAGES.has(pathname)) {
+    if (!(await sessionAllowsPage(request))) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("reason", "session");
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const csp = buildCsp(nonce);
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
