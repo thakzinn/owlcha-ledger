@@ -6,7 +6,7 @@ import Swal from "sweetalert2";
 import { todayBangkok } from "@/lib/date";
 import { typeFromAmount, toSignedAmount, type EntryType } from "@/lib/entries";
 import SummaryCard, { type SummaryEntry } from "@/components/SummaryCard";
-import GpCalculator from "@/components/GpCalculator";
+import GpCalculator, { type GpResult } from "@/components/GpCalculator";
 
 interface UiEntry {
   id: number;
@@ -15,7 +15,13 @@ interface UiEntry {
   /** ค่าบวกเป็น string ตามที่พิมพ์ — แปลงเครื่องหมายตอน submit เท่านั้น */
   amount: string;
   channel: "เงินสด" | "โอน";
+  /** breakdown จากเครื่องคิดเลข GP (แสดงบนการ์ดเท่านั้น — ชีตเก็บ net ใน amount) */
+  gp?: GpResult;
 }
+
+/** ปุ่ม GP เฉพาะรายรับจากแอปเดลิเวอรีที่โดนหัก GP */
+const isDeliveryDesc = (desc: string): boolean =>
+  /grab|lineman|shopee/i.test(desc);
 
 interface ApiError {
   error?: { code?: string; message?: string };
@@ -507,12 +513,22 @@ export default function LedgerApp({ email }: { email: string }) {
                 <option>เงินสด</option>
                 <option>โอน</option>
               </select>
+              {e.gp && (
+                <div className="ml-1 min-w-0 flex-1 self-center text-right text-[11px] leading-tight text-gray-500">
+                  <p className="truncate">
+                    ยอดขายบนแอป {fmt(e.gp.gross)} − GP {e.gp.gpPct}% {fmt(e.gp.gpAmt)}
+                  </p>
+                  <p className="truncate">
+                    − VAT {e.gp.vatPct}% {fmt(e.gp.vatAmt)} = สุทธิ {fmt(e.gp.net)}
+                  </p>
+                </div>
+              )}
               <button
                 type="button"
                 aria-label="ลบรายการ"
                 disabled={busy || entries.length <= 1}
                 onClick={() => void removeRow(e)}
-                className="ml-auto flex h-10 w-10 items-center justify-center rounded-full bg-red-100 text-xl font-bold text-red-500 shadow-sm enabled:hover:bg-red-200 disabled:opacity-40"
+                className="ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-xl font-bold text-red-500 shadow-sm enabled:hover:bg-red-200 disabled:opacity-40"
               >
                 ×
               </button>
@@ -536,12 +552,15 @@ export default function LedgerApp({ email }: { email: string }) {
                   placeholder="0.00"
                   value={e.amount}
                   disabled={busy}
-                  onChange={(ev) => update(e.id, { amount: sanitizeAmount(ev.target.value) })}
+                  onChange={(ev) =>
+                    // แก้ยอดเองทีหลัง = breakdown GP เดิมไม่ตรงแล้ว → ล้างทิ้ง
+                    update(e.id, { amount: sanitizeAmount(ev.target.value), gp: undefined })
+                  }
                   className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-right ${
                     e.type === "expense" ? "text-red-700" : "text-green-700"
                   }`}
                 />
-                {e.type === "income" && (
+                {e.type === "income" && isDeliveryDesc(e.description) && (
                   <button
                     type="button"
                     title="คำนวณค่า GP (grab/lineman)"
@@ -606,8 +625,8 @@ export default function LedgerApp({ email }: { email: string }) {
       {gpTargetId !== null && (
         <GpCalculator
           onClose={() => setGpTargetId(null)}
-          onApply={(net) => {
-            update(gpTargetId, { amount: net });
+          onApply={(result) => {
+            update(gpTargetId, { amount: result.net.toFixed(2), gp: result });
             setGpTargetId(null);
           }}
         />

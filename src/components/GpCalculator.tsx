@@ -24,12 +24,21 @@ const sanitize = (v: string): string => {
   return s;
 };
 
+export interface GpResult {
+  gross: number;
+  gpAmt: number;
+  vatAmt: number;
+  net: number;
+  gpPct: number;
+  vatPct: number;
+}
+
 export default function GpCalculator({
   onApply,
   onClose,
 }: {
-  /** รับยอดรับสุทธิ (2 ทศนิยม) ไปเติมช่องจำนวนเงิน */
-  onApply: (net: string) => void;
+  /** ส่งผลคำนวณทั้งชุดกลับไป — ช่องจำนวนเงินใช้ net, breakdown แสดงบนการ์ด */
+  onApply: (result: GpResult) => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<"gross" | "net">("gross");
@@ -144,7 +153,14 @@ export default function GpCalculator({
           <button
             type="button"
             disabled={!calc}
-            onClick={() => calc && onApply(calc.net.toFixed(2))}
+            onClick={() =>
+              calc &&
+              onApply({
+                ...calc,
+                gpPct: parseNum(gpPct),
+                vatPct: parseNum(vatPct),
+              })
+            }
             className="flex-1 rounded-lg bg-blue-600 py-2.5 font-semibold text-white enabled:hover:bg-blue-700 disabled:opacity-50"
           >
             ใช้ยอดสุทธิ
