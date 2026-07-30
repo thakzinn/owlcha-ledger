@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { href: "/", label: "บันทึกรายการ", icon: "📝" },
   { href: "/report-pnd94", label: "รายงานภาษี ภ.ง.ด.94", icon: "🧾" },
   { href: "/report-cashbook", label: "รายงานเงินสดรับ-จ่าย", icon: "📒" },
+  { href: "/report-expenses", label: "รายงานค่าใช้จ่ายแยกหมวด", icon: "💸" },
 ] as const;
 
 type Props = {

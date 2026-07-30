@@ -5,6 +5,9 @@ import {
   saveEntriesSchema,
   notifySchema,
   rangeQuerySchema,
+  categoryMappingSchema,
+  categoryPatchSchema,
+  categoryItemQuerySchema,
 } from "@/lib/schema";
 import { typeFromAmount, toSignedAmount } from "@/lib/entries";
 
@@ -84,6 +87,51 @@ describe("notifySchema", () => {
       notifySchema.safeParse({ date: "2026-07-26", imageBase64: "data:text/html;base64,AAAA" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("categoryMappingSchema (POST /api/expense-categories)", () => {
+  it("trim ทั้ง category/item/note และเติม default counted=true note=\"\"", () => {
+    const r = categoryMappingSchema.safeParse({ category: " OWL ", item: " แก้ว " });
+    expect(r.success && r.data).toEqual({
+      category: "OWL",
+      item: "แก้ว",
+      counted: true,
+      note: "",
+    });
+  });
+  it("category/item ว่าง (หลัง trim) → ไม่ผ่าน", () => {
+    expect(categoryMappingSchema.safeParse({ category: "  ", item: "แก้ว" }).success).toBe(false);
+    expect(categoryMappingSchema.safeParse({ category: "OWL", item: "  " }).success).toBe(false);
+  });
+  it("จำกัดความยาว category 100 / item 200 / note 200", () => {
+    expect(
+      categoryMappingSchema.safeParse({ category: "ก".repeat(101), item: "แก้ว" }).success,
+    ).toBe(false);
+    expect(
+      categoryMappingSchema.safeParse({ category: "OWL", item: "ก".repeat(201) }).success,
+    ).toBe(false);
+    expect(
+      categoryMappingSchema.safeParse({ category: "OWL", item: "แก้ว", note: "ก".repeat(201) })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("categoryPatchSchema (PATCH /api/expense-categories)", () => {
+  it("ต้องมี field ที่จะแก้อย่างน้อย 1 อย่าง", () => {
+    expect(categoryPatchSchema.safeParse({ item: "แก้ว" }).success).toBe(false);
+    expect(categoryPatchSchema.safeParse({ item: "แก้ว", category: "OWL" }).success).toBe(true);
+    expect(categoryPatchSchema.safeParse({ item: "แก้ว", counted: false }).success).toBe(true);
+    expect(categoryPatchSchema.safeParse({ item: "แก้ว", note: "" }).success).toBe(true);
+  });
+});
+
+describe("categoryItemQuerySchema (DELETE /api/expense-categories?item=)", () => {
+  it("item ต้องไม่ว่างหลัง trim", () => {
+    const r = categoryItemQuerySchema.safeParse({ item: " แก้ว " });
+    expect(r.success && r.data.item).toBe("แก้ว");
+    expect(categoryItemQuerySchema.safeParse({ item: "  " }).success).toBe(false);
   });
 });
 

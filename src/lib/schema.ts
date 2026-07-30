@@ -70,5 +70,56 @@ export const notifySchema = z.object({
     .max(11_000_000, "รูปมีขนาดใหญ่เกินไป"),
 });
 
+// ---------- แท็บหมวดหมู่ค่าใช้จ่าย (/api/expense-categories) ----------
+
+const trimmedName = (max: number, label: string) =>
+  z
+    .string()
+    .transform((s) => s.trim())
+    .pipe(
+      z
+        .string()
+        .min(1, `${label}ต้องไม่ว่าง`)
+        .max(max, `${label}ยาวเกิน ${max} ตัวอักษร`),
+    );
+
+/** เพิ่ม mapping ใหม่ 1 แถว (POST) */
+export const categoryMappingSchema = z.object({
+  category: trimmedName(100, "ชื่อหมวดหมู่"),
+  item: trimmedName(200, "ชื่อรายการ"),
+  /** false = ไม่นับเป็นค่าใช้จ่าย (คอลัมน์ C = FALSE) */
+  counted: z.boolean().optional().default(true),
+  note: z
+    .string()
+    .transform((s) => s.trim())
+    .pipe(z.string().max(200, "หมายเหตุยาวเกิน 200 ตัวอักษร"))
+    .optional()
+    .default(""),
+});
+
+/** แก้ mapping ของรายการเดิม (PATCH) — ต้องส่ง field ที่จะแก้อย่างน้อย 1 อย่าง */
+export const categoryPatchSchema = z
+  .object({
+    item: trimmedName(200, "ชื่อรายการ"),
+    category: trimmedName(100, "ชื่อหมวดหมู่").optional(),
+    counted: z.boolean().optional(),
+    note: z
+      .string()
+      .transform((s) => s.trim())
+      .pipe(z.string().max(200, "หมายเหตุยาวเกิน 200 ตัวอักษร"))
+      .optional(),
+  })
+  .refine(
+    (p) => p.category !== undefined || p.counted !== undefined || p.note !== undefined,
+    "ต้องระบุข้อมูลที่ต้องการแก้ไขอย่างน้อย 1 อย่าง",
+  );
+
+/** query ของ DELETE /api/expense-categories?item= */
+export const categoryItemQuerySchema = z.object({
+  item: trimmedName(200, "ชื่อรายการ"),
+});
+
 export type SaveEntriesInput = z.infer<typeof saveEntriesSchema>;
 export type EntryInput = z.infer<typeof entrySchema>;
+export type CategoryMappingInputBody = z.infer<typeof categoryMappingSchema>;
+export type CategoryPatchInput = z.infer<typeof categoryPatchSchema>;
