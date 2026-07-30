@@ -39,6 +39,14 @@ interface ApiError {
   error?: { code?: string; message?: string };
 }
 
+/** แถวจาก GET /api/entries?date= (ข้อมูลดิบของวันนั้นทั้งวัน + version สำหรับ 409) */
+interface DayEntry {
+  description: string;
+  amount: number;
+  channel: string;
+  gross: number | null;
+}
+
 type MappingState =
   | { status: "loading" }
   | { status: "missing" }
@@ -64,6 +72,8 @@ export default function ExpenseReport() {
   // ค่า "สร้างหมวดใหม่…" ต่อรายการ (key = ชื่อรายการ)
   const [newCategoryFor, setNewCategoryFor] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
+  // key ของรายการที่กำลังปรับเครื่องหมาย: `${date}|${desc}|${amount}`
+  const [fixingKey, setFixingKey] = useState<string | null>(null);
 
   const handleHttpError = useCallback(
     async (res: Response, title: string): Promise<void> => {
@@ -214,6 +224,99 @@ export default function ExpenseReport() {
       await fetchMappings();
     } finally {
       setMutatingItem(null);
+    }
+  };
+
+  // รายจ่ายยังไม่จัดหมวดแบบรายครั้ง (มีวันที่) จัดกลุ่มตามชื่อรายการ —
+  // ใช้แสดงวันที่บันทึกและเป็นเป้าของปุ่ม "ปรับเป็นบวก" (กรณีใส่เครื่องหมายผิด)
+  const uncategorizedOccurrences = useMemo(() => {
+    const mapped = new Set(
+      mappings.map((m) => m.item.trim()).filter((item) => item !== ""),
+    );
+    const map = new Map<string, ExpenseEntry[]>();
+    for (const e of entries) {
+      if (e.amount >= 0 || e.date < range.from || e.date > range.to) continue;
+      const desc = e.description.trim();
+      if (mapped.has(desc)) continue;
+      const list = map.get(desc) ?? [];
+      list.push(e);
+      map.set(desc, list);
+    }
+    for (const list of map.values())
+      list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    return map;
+  }, [entries, mappings, range]);
+
+  const occKey = (e: ExpenseEntry) => `${e.date}|${e.description.trim()}|${e.amount}`;
+
+  /**
+   * ปรับรายการที่ใส่เครื่องหมายผิด (ลบ) ให้เป็นบวก (รายรับ) ในสมุดบัญชี —
+   * flow เดียวกับหน้าบันทึกรายการ/หน้ารายงานรายได้: GET วันนั้นทั้งวัน (ได้ version)
+   * → พลิกเครื่องหมายเฉพาะแถวเป้าหมาย → POST ทั้งวันพร้อม baseVersion (409 คุ้มครอง)
+   * channel ถูก normalize "โอน"/อื่น ๆ→"เงินสด" แบบเดียวกับ LedgerApp
+   * เพราะ schema ฝั่งเขียนรับสองค่านี้เท่านั้น (พฤติกรรมเดิมของการแก้วันเก่า)
+   */
+  const fixToPositive = async (occ: ExpenseEntry) => {
+    const desc = occ.description.trim();
+    const confirm = await Swal.fire({
+      icon: "warning",
+      title: "ปรับเป็นรายรับ (บวก)?",
+      html: `"${desc}" วันที่ ${occ.date}<br/>${fmtBaht(occ.amount)} → <b>${fmtBaht(Math.abs(occ.amount))}</b> ในสมุดบัญชี`,
+      showCancelButton: true,
+      confirmButtonText: "ปรับเป็นบวก",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#f59e0b",
+    });
+    if (!confirm.isConfirmed) return;
+    setFixingKey(occKey(occ));
+    try {
+      const res = await fetch(`/api/entries?date=${occ.date}`);
+      if (!res.ok) {
+        await handleHttpError(res, "โหลดข้อมูลวันดังกล่าวไม่สำเร็จ");
+        return;
+      }
+      const day = (await res.json()) as { entries: DayEntry[]; version: string };
+      const idx = day.entries.findIndex(
+        (e) => e.description.trim() === desc && e.amount === occ.amount,
+      );
+      if (idx === -1) {
+        void Swal.fire({
+          icon: "error",
+          title: "ไม่พบรายการในสมุดบัญชี",
+          text: "รายการอาจถูกแก้ไขไปแล้ว ระบบจะโหลดข้อมูลใหม่",
+        });
+        await fetchRange(range.from, range.to);
+        return;
+      }
+      const payload = day.entries.map((e, i) => ({
+        description: e.description,
+        amount: i === idx ? Math.abs(e.amount) : e.amount,
+        channel: e.channel === "โอน" ? "โอน" : "เงินสด",
+        ...(e.gross != null ? { gross: e.gross } : {}),
+      }));
+      const save = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: occ.date,
+          entries: payload,
+          baseVersion: day.version,
+        }),
+      });
+      if (!save.ok) {
+        await handleHttpError(save, "แก้ไขไม่สำเร็จ");
+        return;
+      }
+      await fetchRange(range.from, range.to);
+      void Swal.fire({
+        icon: "success",
+        title: "ปรับเป็นบวกแล้ว",
+        text: `"${desc}" วันที่ ${occ.date} ย้ายไปฝั่งรายรับแล้ว`,
+        timer: 1600,
+        showConfirmButton: false,
+      });
+    } finally {
+      setFixingKey(null);
     }
   };
 
@@ -527,20 +630,50 @@ export default function ExpenseReport() {
             <span aria-hidden>{showUncategorized ? "▲" : "▼"}</span>
           </button>
           {showUncategorized && (
-            <ul className="mt-3 divide-y divide-gray-100">
-              {report.uncategorizedItems.map((u) => (
-                <li key={u.item} className="flex flex-wrap items-center gap-2 py-2 text-sm">
-                  <span className="min-w-0 flex-1">
-                    <span className="font-medium text-gray-800">{u.item}</span>{" "}
-                    <span className="text-gray-500">
-                      ({u.count} รายการ · {fmtBaht(u.amount)} บาท)
-                    </span>
-                  </span>
-                  {renderCategorySelect(u.item, (c) => void addMapping(u.item, c))}
-                  {renderNewCategoryInput(u.item, (c) => void addMapping(u.item, c))}
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="mt-2 text-xs text-gray-500">
+                เลือกหมวดเพื่อจัดหมวด หรือถ้าเป็นรายรับที่เผลอบันทึกเป็นลบ
+                กด &quot;ปรับเป็นบวก&quot; เพื่อแก้ในสมุดบัญชีได้เลย
+              </p>
+              <ul className="mt-2 divide-y divide-gray-100">
+                {report.uncategorizedItems.map((u) => (
+                  <li key={u.item} className="py-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium text-gray-800">{u.item}</span>{" "}
+                        <span className="text-gray-500">
+                          ({u.count} รายการ · {fmtBaht(u.amount)} บาท)
+                        </span>
+                      </span>
+                      {renderCategorySelect(u.item, (c) => void addMapping(u.item, c))}
+                      {renderNewCategoryInput(u.item, (c) => void addMapping(u.item, c))}
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                      {(uncategorizedOccurrences.get(u.item) ?? []).map((occ, i) => (
+                        <li
+                          key={`${occKey(occ)}#${i}`}
+                          className="flex flex-wrap items-center gap-2 pl-4"
+                        >
+                          <span className="text-gray-600 tabular-nums">
+                            {occ.date} · {fmtBaht(Math.abs(occ.amount))} บาท
+                          </span>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-amber-300 px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                            disabled={fixingKey !== null}
+                            onClick={() => void fixToPositive(occ)}
+                          >
+                            {fixingKey === occKey(occ)
+                              ? "กำลังปรับ…"
+                              : "ปรับเป็นบวก"}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </section>
       )}
