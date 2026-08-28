@@ -37,10 +37,10 @@ export default function SummaryCard({
       <table className="mb-2 w-full border border-gray-300 text-sm">
         <thead>
           <tr className="bg-gray-100">
-            <th className="border border-gray-300 px-2 py-1">ประเภท</th>
-            <th className="border border-gray-300 px-2 py-1">รายการ</th>
-            <th className="border border-gray-300 px-2 py-1">จำนวน (฿)</th>
-            <th className="border border-gray-300 px-2 py-1">ช่องทาง</th>
+            <th className="border border-gray-300 px-2 py-1 text-center">ประเภท</th>
+            <th className="border border-gray-300 px-2 py-1 text-center">รายการ</th>
+            <th className="border border-gray-300 px-2 py-1 text-center">จำนวน (฿)</th>
+            <th className="border border-gray-300 px-2 py-1 text-center">ช่องทาง</th>
           </tr>
         </thead>
         <tbody>
