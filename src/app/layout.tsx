@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Kanit } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
+import BuildInfo from "@/components/BuildInfo";
 
 const kanit = Kanit({
   subsets: ["thai", "latin"],
@@ -30,7 +31,10 @@ export default async function RootLayout({
   await headers();
   return (
     <html lang="th" className={kanit.variable}>
-      <body className="bg-gray-50 min-h-screen antialiased">{children}</body>
+      <body className="bg-gray-50 min-h-screen antialiased">
+        {children}
+        <BuildInfo />
+      </body>
     </html>
   );
 }

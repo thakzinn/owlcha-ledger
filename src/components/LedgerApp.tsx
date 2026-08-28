@@ -394,7 +394,18 @@ export default function LedgerApp({ email }: { email: string }) {
       );
       await document.fonts.ready;
       const { default: html2canvas } = await import("html2canvas-pro");
-      const canvas = await html2canvas(el, { scale: 2, backgroundColor: "#ffffff" });
+      // ระบุ width/height ของ element ตรง ๆ (แบบเดียวกับ legacy) + ขยาย viewport ของ
+      // clone ให้สูงเท่าการ์ด — ไม่งั้นการ์ดที่สูงกว่าจอ (รายการเยอะ) จะโดนตัดขอบล่าง
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        width: el.offsetWidth,
+        height: el.offsetHeight,
+        windowWidth: el.offsetWidth,
+        windowHeight: el.offsetHeight,
+        scrollX: 0,
+        scrollY: 0,
+      });
       return canvas.toDataURL("image/png");
     } catch {
       return null;
@@ -895,7 +906,8 @@ export default function LedgerApp({ email }: { email: string }) {
       {/* พื้นที่ render สรุปนอกจอ — ใช้ทั้ง preview (clone) และ capture รูป */}
       {captureData && (
         <div
-          style={{ position: "fixed", top: "-9999px", left: "-9999px", width: 620 }}
+          // absolute (ไม่ใช่ fixed) — html2canvas จะ clip element ใน fixed ที่สูงเกิน viewport
+          style={{ position: "absolute", top: 0, left: "-9999px", width: 620 }}
         >
           <div ref={captureRef}>
             <SummaryCard date={captureData.date} entries={captureData.entries} />
