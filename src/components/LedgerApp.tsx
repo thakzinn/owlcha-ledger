@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 import { todayBangkok } from "@/lib/date";
 import { typeFromAmount, toSignedAmount, type EntryType } from "@/lib/entries";
+import type { CategoryMappingInput } from "@/lib/expense-report";
 import SummaryCard, { type SummaryEntry } from "@/components/SummaryCard";
 
 interface UiEntry {
@@ -93,6 +94,10 @@ export default function LedgerApp({ email }: { email: string }) {
   const [version, setVersion] = useState<string | null>(null);
   const [latestDate, setLatestDate] = useState<string | null>(null);
   const [descriptions, setDescriptions] = useState<string[]>([]);
+  /** null = แท็บหมวดหมู่ยังไม่ถูกสร้าง/โหลดไม่สำเร็จ → ซ่อน UI หมวดหมู่ไปเลย */
+  const [catMappings, setCatMappings] = useState<CategoryMappingInput[] | null>(null);
+  /** ชื่อรายการที่กำลังบันทึกหมวด — กันกดซ้ำระหว่างรอ API */
+  const [catBusyItem, setCatBusyItem] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "saving">("idle");
   const [restored, setRestored] = useState(false);
 
@@ -115,6 +120,20 @@ export default function LedgerApp({ email }: { email: string }) {
     },
     [router],
   );
+
+  /** โหลด mapping "รายการ → หมวดหมู่" — แท็บยังไม่มี/พลาดถือเป็นเรื่องปกติ แค่ไม่แสดง UI */
+  const loadCategoryMappings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/expense-categories");
+      if (!res.ok) return;
+      const data = (await res.json()) as
+        | { exists: false }
+        | { exists: true; mappings: CategoryMappingInput[] };
+      setCatMappings(data.exists ? data.mappings : null);
+    } catch {
+      /* หมวดหมู่เป็นของเสริม — โหลดไม่ได้ก็ใช้งานส่วนอื่นต่อได้ */
+    }
+  }, []);
 
   const loadDay = useCallback(
     async (d: string, { silent = false } = {}) => {
@@ -208,6 +227,7 @@ export default function LedgerApp({ email }: { email: string }) {
         if (d?.descriptions) setDescriptions(d.descriptions);
       })
       .catch(() => undefined);
+    void loadCategoryMappings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -259,6 +279,79 @@ export default function LedgerApp({ email }: { email: string }) {
     }
     return { income, expense, balance: income - expense };
   }, [entries]);
+
+  // ---------- หมวดหมู่ค่าใช้จ่าย ----------
+
+  /** first-wins ตามลำดับแถวในแท็บ — กติกาเดียวกับ buildExpenseReport */
+  const catByItem = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of catMappings ?? []) {
+      const item = m.item.trim();
+      if (item && !map.has(item)) map.set(item, m.category);
+    }
+    return map;
+  }, [catMappings]);
+
+  const categoryChoices = useMemo(() => {
+    const seen = new Set<string>();
+    for (const m of catMappings ?? []) if (m.category) seen.add(m.category);
+    return [...seen];
+  }, [catMappings]);
+
+  /** จัด/ย้ายหมวดของชื่อรายการ — picked === "__new__" คือขอตั้งชื่อหมวดใหม่ก่อน */
+  const assignCategory = async (item: string, picked: string) => {
+    let category = picked;
+    if (picked === "__new__") {
+      const res = await Swal.fire<string>({
+        title: "สร้างหมวดใหม่",
+        input: "text",
+        inputLabel: `จัดหมวดให้ "${item}"`,
+        inputPlaceholder: "ชื่อหมวดใหม่",
+        inputAttributes: { maxlength: "100" },
+        showCancelButton: true,
+        confirmButtonText: "ตกลง",
+        cancelButtonText: "ยกเลิก",
+        inputValidator: (v) => (v.trim() ? null : "กรุณาใส่ชื่อหมวด"),
+      });
+      if (!res.isConfirmed || !res.value?.trim()) return;
+      category = res.value.trim();
+    }
+    const current = catByItem.get(item);
+    if (category === current) return;
+
+    setCatBusyItem(item);
+    try {
+      const res = await fetch("/api/expense-categories", {
+        // รายการที่ยังไม่เคย map = เพิ่มแถวใหม่, เคยแล้ว = ย้ายหมวดแถวเดิม
+        method: current === undefined ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item, category }),
+      });
+      if (!res.ok) {
+        const msg = await handleApiFailure(res);
+        if (msg) void Swal.fire({ icon: "error", title: "จัดหมวดไม่สำเร็จ", text: msg });
+        // สถานะบนชีตอาจเปลี่ยนจากที่อื่น (เช่น ITEM_EXISTS) → sync ใหม่
+        await loadCategoryMappings();
+        return;
+      }
+      await loadCategoryMappings();
+      void Swal.fire({
+        icon: "success",
+        title: "จัดหมวดแล้ว",
+        text: `"${item}" → ${category}`,
+        timer: 1400,
+        showConfirmButton: false,
+      });
+    } catch {
+      void Swal.fire({
+        icon: "error",
+        title: "จัดหมวดไม่สำเร็จ",
+        text: "เชื่อมต่อไม่ได้ กรุณาลองใหม่",
+      });
+    } finally {
+      setCatBusyItem(null);
+    }
+  };
 
   // ---------- บันทึก ----------
 
@@ -648,6 +741,43 @@ export default function LedgerApp({ email }: { email: string }) {
                 }`}
               />
             </div>
+
+            {/* หมวดหมู่ค่าใช้จ่าย — โผล่เฉพาะแถวรายจ่ายที่มีชื่อรายการ และแท็บหมวดหมู่ถูกสร้างแล้ว */}
+            {e.type === "expense" &&
+              catMappings !== null &&
+              e.description.trim() !== "" &&
+              (() => {
+                const item = e.description.trim();
+                const current = catByItem.get(item);
+                return (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                    <span>หมวดหมู่</span>
+                    <select
+                      aria-label="หมวดหมู่ค่าใช้จ่าย"
+                      value={current ?? ""}
+                      disabled={busy || catBusyItem === item}
+                      onChange={(ev) => void assignCategory(item, ev.target.value)}
+                      className={`min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-sm ${
+                        current === undefined
+                          ? "border-amber-300 bg-amber-50 text-amber-800"
+                          : "border-gray-300 bg-white text-gray-800"
+                      }`}
+                    >
+                      {current === undefined && (
+                        <option value="" disabled>
+                          — ยังไม่จัดหมวด เลือกหมวด —
+                        </option>
+                      )}
+                      {categoryChoices.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                      <option value="__new__">+ สร้างหมวดใหม่…</option>
+                    </select>
+                  </div>
+                );
+              })()}
 
             {/* breakdown GP — แถบเต็มความกว้างของการ์ด (แก้ปัญหาซ้อนกันบนมือถือ) */}
             {e.type === "income" &&
