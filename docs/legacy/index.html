@@ -216,9 +216,16 @@
         const rows = entries.map(e=>{
           const amt = e.amount;
           if (amt<0) exp += Math.abs(amt); else inc += amt;
+          // รายรับเดลิเวอรีที่โดนหัก GP — เกณฑ์เดียวกับ isDeliveryDesc ใน LedgerApp
+          const hasGp = amt>=0 && /grab|lineman|shopee/i.test(e.description);
+          // ยอด GP ที่ถูกหัก คำนวณย้อนจากยอดสุทธิ (GP 30% + VAT 7%) สูตรเดียวกับ gpBreakdownFromNet
+          const gpAmt = hasGp && amt>0 ? (amt/(1-0.30*1.07))*0.30 : null;
+          const gpNote = gpAmt!=null
+            ? ` <span class="text-gray-500">(GP ${gpAmt.toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})})</span>`
+            : '';
           return `<tr>
-            <td class="border px-2 py-1 text-center">${amt<0?'รายจ่าย':'รายรับ'}</td>
-            <td class="border px-2 py-1">${e.description}</td>
+            <td class="border px-2 py-1 text-center">${amt<0?'รายจ่าย':(hasGp?'รายรับ (GP)':'รายรับ')}</td>
+            <td class="border px-2 py-1">${e.description}${gpNote}</td>
             <td class="border px-2 py-1 text-right">${amt.toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
             <td class="border px-2 py-1 text-center">${e.channel}</td>
           </tr>`;
