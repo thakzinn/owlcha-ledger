@@ -5,6 +5,8 @@ export interface SummaryEntry {
   /** ค่ามีเครื่องหมาย (ลบ = รายจ่าย) */
   amount: number;
   channel: string;
+  /** หมวดหมู่ค่าใช้จ่าย — เฉพาะรายจ่าย (รายรับไม่มีหมวด) */
+  category?: string;
 }
 
 const fmt = (n: number) =>
@@ -39,6 +41,7 @@ export default function SummaryCard({
           <tr className="bg-gray-100">
             <th className="border border-gray-300 px-2 py-1">ประเภท</th>
             <th className="border border-gray-300 px-2 py-1">รายการ</th>
+            <th className="border border-gray-300 px-2 py-1">หมวดหมู่</th>
             <th className="border border-gray-300 px-2 py-1">จำนวน (฿)</th>
             <th className="border border-gray-300 px-2 py-1">ช่องทาง</th>
           </tr>
@@ -50,6 +53,9 @@ export default function SummaryCard({
                 {e.amount < 0 ? "รายจ่าย" : "รายรับ"}
               </td>
               <td className="border border-gray-300 px-2 py-1">{e.description}</td>
+              <td className="border border-gray-300 px-2 py-1 text-center">
+                {(e.amount < 0 && e.category) || "—"}
+              </td>
               <td className="border border-gray-300 px-2 py-1 text-right">
                 {fmt(e.amount)}
               </td>
