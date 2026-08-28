@@ -10,6 +10,14 @@ export interface SummaryEntry {
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/** รายรับเดลิเวอรีที่โดนหัก GP — เกณฑ์เดียวกับ isDeliveryDesc ใน LedgerApp */
+const isDeliveryIncome = (e: SummaryEntry): boolean =>
+  e.amount >= 0 && /grab|lineman|shopee/i.test(e.description);
+
+/** ยอด GP ที่ถูกหัก คำนวณย้อนจากยอดสุทธิ (GP 30% + VAT 7%) สูตรเดียวกับ gpBreakdownFromNet */
+const gpFromNet = (net: number): number | null =>
+  net > 0 ? (net / (1 - 0.3 * 1.07)) * 0.3 : null;
+
 /**
  * สรุปรายการสำหรับ dialog ยืนยัน + รูปที่ส่งเข้า Telegram
  * ใช้ JSX interpolation ปกติเท่านั้น — ห้าม dangerouslySetInnerHTML (ปิดหนี้ XSS ข้อ 8)
@@ -44,12 +52,19 @@ export default function SummaryCard({
           </tr>
         </thead>
         <tbody>
-          {entries.map((e, i) => (
+          {entries.map((e, i) => {
+            const gpAmt = isDeliveryIncome(e) ? gpFromNet(e.amount) : null;
+            return (
             <tr key={i}>
               <td className="border border-gray-300 px-2 py-1 text-center">
-                {e.amount < 0 ? "รายจ่าย" : "รายรับ"}
+                {e.amount < 0 ? "รายจ่าย" : gpAmt != null ? "รายรับ (GP)" : "รายรับ"}
               </td>
-              <td className="border border-gray-300 px-2 py-1">{e.description}</td>
+              <td className="border border-gray-300 px-2 py-1">
+                {e.description}
+                {gpAmt != null && (
+                  <span className="text-gray-500"> (GP {fmt(gpAmt)})</span>
+                )}
+              </td>
               <td className="border border-gray-300 px-2 py-1 text-right">
                 {fmt(e.amount)}
               </td>
@@ -57,7 +72,8 @@ export default function SummaryCard({
                 {e.channel}
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       <div className="flex flex-wrap justify-between gap-2 text-sm">
