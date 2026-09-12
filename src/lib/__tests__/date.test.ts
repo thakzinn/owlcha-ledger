@@ -5,6 +5,8 @@ import {
   dateStrToSerial,
   isValidDateStr,
   thaiDateLabel,
+  nextDateStr,
+  firstUnsavedDate,
 } from "@/lib/date";
 
 describe("todayBangkok — timezone Asia/Bangkok ไม่ใช่ UTC (หนี้เดิมข้อ 9)", () => {
@@ -55,5 +57,40 @@ describe("thaiDateLabel", () => {
     const label = thaiDateLabel("2026-07-26");
     expect(label).toContain("2569");
     expect(label).toContain("กรกฎาคม");
+  });
+});
+
+describe("nextDateStr", () => {
+  it("ข้ามวัน/เดือน/ปี/อธิกสุรทินถูกต้อง", () => {
+    expect(nextDateStr("2026-09-11")).toBe("2026-09-12");
+    expect(nextDateStr("2026-09-30")).toBe("2026-10-01");
+    expect(nextDateStr("2025-12-31")).toBe("2026-01-01");
+    expect(nextDateStr("2024-02-28")).toBe("2024-02-29");
+  });
+});
+
+describe("firstUnsavedDate — วันถัดจากวันล่าสุดที่บันทึก (max + 1)", () => {
+  const today = "2026-09-12";
+  it("วันล่าสุดคือ 09-11 → คืน 09-12 (ไม่สนวันโหว่กลางทาง)", () => {
+    expect(
+      firstUnsavedDate(["2026-09-08", "2026-09-10", "2026-09-11"], today),
+    ).toBe("2026-09-12");
+  });
+  it("วันล่าสุดคือ 09-10 → คืน 09-11", () => {
+    expect(firstUnsavedDate(["2026-09-09", "2026-09-10"], today)).toBe("2026-09-11");
+  });
+  it("บันทึกถึงวันนี้แล้ว → คืนวันนี้ (ไม่ชี้อนาคต)", () => {
+    expect(
+      firstUnsavedDate(["2026-09-10", "2026-09-11", "2026-09-12"], today),
+    ).toBe(today);
+  });
+  it("ชีตว่าง → คืนวันนี้", () => {
+    expect(firstUnsavedDate([], today)).toBe(today);
+  });
+  it("ข้อมูลล่าสุดเป็นวันอนาคต → คืนวันนี้", () => {
+    expect(firstUnsavedDate(["2026-09-20"], today)).toBe(today);
+  });
+  it("ข้ามเดือน: วันล่าสุด 08-31 → คืน 09-01", () => {
+    expect(firstUnsavedDate(["2026-08-31"], today)).toBe("2026-09-01");
   });
 });

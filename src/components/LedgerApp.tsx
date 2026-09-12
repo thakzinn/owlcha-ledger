@@ -143,12 +143,13 @@ export default function LedgerApp({ email }: { email: string }) {
         if (!res.ok) {
           const msg = await handleApiFailure(res);
           if (msg) void Swal.fire({ icon: "error", title: "โหลดไม่สำเร็จ", text: msg });
-          return;
+          return null;
         }
         const data = (await res.json()) as {
           entries: (SummaryEntry & { gross?: number | null })[];
           version: string;
           latestDate: string | null;
+          firstUnsavedDate?: string;
         };
         setVersion(data.version);
         setLatestDate(data.latestDate);
@@ -182,12 +183,14 @@ export default function LedgerApp({ email }: { email: string }) {
             });
           }
         }
+        return data;
       } catch {
         void Swal.fire({
           icon: "error",
           title: "โหลดไม่สำเร็จ",
           text: "เชื่อมต่อไม่ได้ กรุณาลองใหม่",
         });
+        return null;
       } finally {
         setStatus("idle");
       }
@@ -195,31 +198,54 @@ export default function LedgerApp({ email }: { email: string }) {
     [handleApiFailure],
   );
 
-  // mount: กู้ draft ของผู้ใช้คนนี้ (ถ้ามี) ไม่งั้นโหลดวันนี้ + ดึง autocomplete แบบ non-blocking
+  // mount: เปิดที่ "วันเก่าสุดที่ยังไม่ได้บันทึก" เสมอ (ต้องถามชีตก่อนถึงจะรู้)
+  // draft ของผู้ใช้ใช้เฉพาะเมื่อเป็นวันเดียวกับวันเป้าหมาย — กันงานพิมพ์ค้างของวันนั้นหาย
+  // แต่ไม่ให้ draft ตรึงแอปไว้ที่วันเก่า (ไม่งั้น feature นี้ไม่ได้ทำงานเลยเพราะมี draft ค้างตลอด)
   useEffect(() => {
-    let draftUsed = false;
+    type Draft = {
+      date?: string;
+      entries?: UiEntry[];
+      version?: string | null;
+      latestDate?: string | null;
+    };
+    let draft: Draft | null = null;
     try {
       const raw = localStorage.getItem(draftKey);
       if (raw) {
-        const draft = JSON.parse(raw) as {
-          date?: string;
-          entries?: UiEntry[];
-          version?: string | null;
-          latestDate?: string | null;
-        };
-        if (draft.date && Array.isArray(draft.entries) && draft.entries.length) {
-          setDate(draft.date);
-          setEntries(draft.entries.map((e) => ({ ...e, id: nextId++ })));
-          setVersion(draft.version ?? null);
-          setLatestDate(draft.latestDate ?? null);
-          draftUsed = true;
+        const parsed = JSON.parse(raw) as Draft;
+        if (parsed.date && Array.isArray(parsed.entries) && parsed.entries.length) {
+          draft = parsed;
         }
       }
     } catch {
       /* draft เสีย → เริ่มใหม่ */
     }
-    if (!draftUsed) void loadDay(todayBangkok(), { silent: true });
-    setRestored(true);
+
+    const restoreDraft = (d: Draft) => {
+      setDate(d.date!);
+      setEntries(d.entries!.map((e) => ({ ...e, id: nextId++ })));
+      setVersion(d.version ?? null);
+      setLatestDate(d.latestDate ?? null);
+    };
+
+    void (async () => {
+      const today = todayBangkok();
+      const data = await loadDay(today, { silent: true });
+      if (!data) {
+        // ถามชีตไม่ได้ (เน็ต/สิทธิ์) → กู้ draft ตามเดิมถ้ามี ดีกว่าทิ้งงานค้าง
+        if (draft) restoreDraft(draft);
+      } else {
+        const target = data.firstUnsavedDate ?? today;
+        if (draft?.date === target) {
+          restoreDraft(draft);
+        } else if (target !== today) {
+          setDate(target);
+          await loadDay(target, { silent: true });
+        }
+      }
+      // เปิด auto-save draft หลัง restore จบ — กัน save effect เขียนทับ draft ระหว่างโหลด
+      setRestored(true);
+    })();
 
     void fetch("/api/descriptions")
       .then((r) => (r.ok ? r.json() : null))

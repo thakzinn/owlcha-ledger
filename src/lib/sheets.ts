@@ -1,6 +1,6 @@
 import { google, type sheets_v4 } from "googleapis";
 import { env } from "@/lib/env";
-import { dateStrToSerial } from "@/lib/date";
+import { dateStrToSerial, firstUnsavedDate, todayBangkok } from "@/lib/date";
 import {
   DATA_START_ROW,
   type SheetRow,
@@ -113,11 +113,14 @@ export interface DayData {
   version: string;
   /** วันที่ล่าสุดที่มีข้อมูลในชีต — ใช้แสดงคำเตือนแก้วันย้อนหลัง (D11) */
   latestDate: string | null;
+  /** วันถัดจากวันล่าสุดที่มีข้อมูล (≤ วันนี้) — ค่าตั้งต้นของช่องวันที่ตอนเปิดแอป */
+  firstUnsavedDate: string;
 }
 
 export async function getDay(accessToken: string, date: string): Promise<DayData> {
   const api = sheetsClient(accessToken);
   const rows = await readRows(api);
+  const recordedDates = rows.flatMap((r) => (r.date ? [r.date] : []));
   return {
     entries: rows
       .filter((r) => r.date === date)
@@ -128,10 +131,11 @@ export async function getDay(accessToken: string, date: string): Promise<DayData
         gross,
       })),
     version: computeVersion(rows, date),
-    latestDate: rows.reduce<string | null>(
-      (max, r) => (r.date && (!max || r.date > max) ? r.date : max),
+    latestDate: recordedDates.reduce<string | null>(
+      (max, d) => (!max || d > max ? d : max),
       null,
     ),
+    firstUnsavedDate: firstUnsavedDate(recordedDates, todayBangkok()),
   };
 }
 

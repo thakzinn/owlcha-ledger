@@ -37,6 +37,24 @@ export function dateStrToSerial(dateStr: string): number {
   return (Date.UTC(y!, m! - 1, d!) - SHEETS_EPOCH_UTC) / DAY_MS;
 }
 
+/** วันถัดไปของ YYYY-MM-DD — คำนวณผ่าน serial ล้วน ไม่ผูก timezone */
+export function nextDateStr(dateStr: string): string {
+  return serialToDateStr(dateStrToSerial(dateStr) + 1);
+}
+
+/**
+ * วันที่ถัดจากวันล่าสุดที่มีข้อมูล (max + 1 วัน) — ไม่สนวันโหว่กลางทาง
+ * ไม่มีข้อมูลเลย / วันล่าสุด ≥ วันนี้ → คืน today (ช่องวันที่ต้องไม่ชี้เกินวันนี้)
+ */
+export function firstUnsavedDate(recorded: Iterable<string>, today: string): string {
+  let max: string | null = null;
+  for (const d of recorded) {
+    if (!max || d > max) max = d;
+  }
+  if (!max || max >= today) return today;
+  return nextDateStr(max);
+}
+
 /** ตรวจว่าเป็น YYYY-MM-DD และเป็นวันที่จริง (ปฏิเสธ 2026-02-30) */
 export function isValidDateStr(s: string): boolean {
   if (!DATE_RE.test(s)) return false;
