@@ -5,6 +5,8 @@ export interface SummaryEntry {
   /** ค่ามีเครื่องหมาย (ลบ = รายจ่าย) */
   amount: number;
   channel: string;
+  /** ยอดก่อนหัก GP/VAT ของรายรับเดลิเวอรี */
+  gross?: number | null;
 }
 
 const fmt = (n: number) =>
@@ -14,9 +16,19 @@ const fmt = (n: number) =>
 const isDeliveryIncome = (e: SummaryEntry): boolean =>
   e.amount >= 0 && /grab|lineman|shopee/i.test(e.description);
 
-/** ยอด GP ที่ถูกหัก คำนวณย้อนจากยอดสุทธิ (GP 30% + VAT 7%) สูตรเดียวกับ gpBreakdownFromNet */
-const gpFromNet = (net: number): number | null =>
-  net > 0 ? (net / (1 - 0.3 * 1.07)) * 0.3 : null;
+/** ยอดก่อนหักและยอดที่ถูกหัก โดยใช้ค่าที่บันทึกจริงก่อน แล้วจึงคำนวณย้อนสำหรับข้อมูลเก่า */
+export const deliveryDeduction = (
+  e: SummaryEntry,
+): { gross: number; deducted: number } | null => {
+  if (!isDeliveryIncome(e)) return null;
+  const gross =
+    e.gross != null && Number.isFinite(e.gross) && e.gross > 0
+      ? e.gross
+      : e.amount > 0
+        ? e.amount / (1 - 0.3 * 1.07)
+        : null;
+  return gross == null ? null : { gross, deducted: gross - e.amount };
+};
 
 /**
  * สรุปรายการสำหรับ dialog ยืนยัน + รูปที่ส่งเข้า Telegram
@@ -53,16 +65,19 @@ export default function SummaryCard({
         </thead>
         <tbody>
           {entries.map((e, i) => {
-            const gpAmt = isDeliveryIncome(e) ? gpFromNet(e.amount) : null;
+            const deduction = deliveryDeduction(e);
             return (
             <tr key={i}>
               <td className="border border-gray-300 px-2 py-1 text-center">
-                {e.amount < 0 ? "รายจ่าย" : gpAmt != null ? "รายรับ (GP)" : "รายรับ"}
+                {e.amount < 0 ? "รายจ่าย" : deduction != null ? "รายรับ (หัก GP)" : "รายรับ"}
               </td>
               <td className="border border-gray-300 px-2 py-1">
                 {e.description}
-                {gpAmt != null && (
-                  <span className="text-gray-500"> (GP {fmt(gpAmt)})</span>
+                {deduction != null && (
+                  <span className="text-gray-500">
+                    {" "}
+                    (ก่อนหัก {fmt(deduction.gross)} · หัก {fmt(deduction.deducted)})
+                  </span>
                 )}
               </td>
               <td className="border border-gray-300 px-2 py-1 text-right">
