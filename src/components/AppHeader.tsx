@@ -6,6 +6,9 @@ import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/", label: "บันทึกรายการ", icon: "📝" },
+  { href: "/dashboard", label: "Dashboard เจ้าของร้าน", icon: "📊" },
+  { href: "/data-quality", label: "ศูนย์ตรวจข้อมูลผิดปกติ", icon: "🔎" },
+  { href: "/settings", label: "ชื่อรายการ / รายการประจำ", icon: "⚙️" },
   { href: "/report-pnd94", label: "รายงานภาษี ภ.ง.ด.94", icon: "🧾" },
   { href: "/report-cashbook", label: "รายงานเงินสดรับ-จ่าย", icon: "📒" },
   { href: "/report-expenses", label: "รายงานค่าใช้จ่ายแยกหมวด", icon: "💸" },
@@ -50,7 +53,7 @@ export default function AppHeader({ name, email, signOutAction }: Props) {
   return (
     <header className="relative z-50 mb-4 flex items-center justify-between rounded-xl bg-white p-3 shadow">
       <Link href="/" className="flex min-w-0 items-center gap-2 pl-1">
-        <span className="text-2xl" aria-hidden>
+        <span className="shrink-0 whitespace-nowrap text-2xl" aria-hidden>
           🦉🍵
         </span>
         <span className="truncate font-semibold text-gray-800">
@@ -58,11 +61,14 @@ export default function AppHeader({ name, email, signOutAction }: Props) {
         </span>
       </Link>
 
+      <div className="flex shrink-0 items-center gap-2">
+        <Link href="/dashboard" className="rounded-lg bg-amber-50 px-2 py-2 text-xs text-amber-800">ภาพรวม</Link>
       <div ref={menuRef} className="relative">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-haspopup="menu"
+          aria-label="เมนูหลักและบัญชีผู้ใช้"
           aria-expanded={open}
           className="flex items-center gap-2 rounded-full p-1 pr-2 hover:bg-gray-100"
         >
@@ -133,6 +139,7 @@ export default function AppHeader({ name, email, signOutAction }: Props) {
             </form>
           </div>
         )}
+      </div>
       </div>
     </header>
   );

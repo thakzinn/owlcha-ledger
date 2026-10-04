@@ -5,9 +5,12 @@ import { signOutAction } from "@/app/actions";
 import AppHeader from "@/components/AppHeader";
 import LedgerApp from "@/components/LedgerApp";
 import SessionBanner from "@/components/SessionBanner";
+import { dateSchema } from "@/lib/schema";
 
 // หน้าบันทึกรายการ — ตรวจ session ซ้ำในหน้าเองเสมอ ไม่พึ่ง proxy เป็นด่านเดียว
-export default async function Home() {
+export default async function Home({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
+  const query = await searchParams;
+  const parsedDate = dateSchema.safeParse(query.date);
   const session = await auth();
   if (!session || session.error) redirect("/login?reason=session");
   const email = session.user?.email ?? "";
@@ -29,7 +32,7 @@ export default async function Home() {
         บันทึกรายการรายรับ-รายจ่าย
       </h1>
 
-      <LedgerApp email={email} />
+      <LedgerApp key={parsedDate.success ? parsedDate.data : "default"} email={email} initialDate={parsedDate.success ? parsedDate.data : undefined} />
     </main>
   );
 }

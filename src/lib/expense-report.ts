@@ -22,6 +22,7 @@ export interface ExpenseEntry {
   /** YYYY-MM-DD */
   date: string;
   description: string;
+  originalDescription?: string;
   /** มีเครื่องหมาย — รายจ่ายคือค่าติดลบ */
   amount: number;
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
+import { request } from "@/lib/client-api";
 import { isValidDateStr, todayBangkok } from "@/lib/date";
 import { fmtBaht, presetRange } from "@/lib/pnd94";
 import {
@@ -13,6 +14,7 @@ import {
   type ExpenseEntry,
 } from "@/lib/expense-report";
 import { buildExpenseWorkbook } from "@/lib/expense-export";
+import { expandCategoryMappings, prepareReportEntries, type Catalog } from "@/lib/catalog";
 
 /**
  * หน้ารายงานค่าใช้จ่ายรายเดือน × หมวดหมู่ + ส่วนจัดการ mapping ของแท็บหมวดหมู่
@@ -64,6 +66,7 @@ export default function ExpenseReport() {
   // default = ทั้งปีปัจจุบัน (ตามที่เจ้าของร้านใช้ดูรายงานประจำปี)
   const [range, setRange] = useState(() => presetRange("FULL", todayBangkok()));
   const [entries, setEntries] = useState<ExpenseEntry[]>([]);
+  const [catalog, setCatalog] = useState<Catalog>({ items: [], recurring: [] });
   const [loadingRange, setLoadingRange] = useState(false);
   const [initing, setIniting] = useState(false);
   const [mutatingItem, setMutatingItem] = useState<string | null>(null);
@@ -96,7 +99,7 @@ export default function ExpenseReport() {
   );
 
   const fetchMappings = useCallback(async (): Promise<void> => {
-    const res = await fetch("/api/expense-categories");
+    const res = await request("/api/expense-categories");
     if (!res.ok) {
       await handleHttpError(res, "โหลดหมวดหมู่ไม่สำเร็จ");
       return;
@@ -115,15 +118,16 @@ export default function ExpenseReport() {
     async (from: string, to: string): Promise<void> => {
       setLoadingRange(true);
       try {
-        const res = await fetch(
-          `/api/entries/range?from=${from}&to=${to}&include=all`,
+        const res = await request(
+          `/api/entries/range?from=${from}&to=${to}&include=all&catalog=true`,
         );
         if (!res.ok) {
           await handleHttpError(res, "ดึงข้อมูลสมุดบัญชีไม่สำเร็จ");
           return;
         }
-        const data = (await res.json()) as { entries: ExpenseEntry[] };
-        setEntries(data.entries.filter((e) => e.amount < 0));
+        const data = (await res.json()) as { entries: ExpenseEntry[]; catalog: Catalog };
+        setCatalog(data.catalog);
+        setEntries(prepareReportEntries(data.entries.filter((e) => e.amount < 0), data.catalog));
       } finally {
         setLoadingRange(false);
       }
@@ -141,9 +145,10 @@ export default function ExpenseReport() {
   }, [range, fetchRange]);
 
   const mappings = mappingState.status === "ready" ? mappingState.mappings : [];
+  const reportMappings = useMemo(() => expandCategoryMappings(mappings, catalog), [mappings, catalog]);
   const report = useMemo(
-    () => buildExpenseReport(entries, mappings, range.from, range.to),
-    [entries, mappings, range],
+    () => buildExpenseReport(entries, reportMappings, range.from, range.to),
+    [entries, reportMappings, range],
   );
   const categoryChoices = useMemo(() => {
     const seen = new Set<string>();
@@ -156,7 +161,7 @@ export default function ExpenseReport() {
   const addMapping = async (item: string, category: string, opts?: { silent?: boolean }) => {
     setMutatingItem(item);
     try {
-      const res = await fetch("/api/expense-categories", {
+      const res = await request("/api/expense-categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category, item }),
@@ -185,7 +190,7 @@ export default function ExpenseReport() {
   const moveMapping = async (item: string, category: string) => {
     setMutatingItem(item);
     try {
-      const res = await fetch("/api/expense-categories", {
+      const res = await request("/api/expense-categories", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ item, category }),
@@ -213,7 +218,7 @@ export default function ExpenseReport() {
     if (!confirm.isConfirmed) return;
     setMutatingItem(item);
     try {
-      const res = await fetch(
+      const res = await request(
         `/api/expense-categories?item=${encodeURIComponent(item)}`,
         { method: "DELETE" },
       );
@@ -231,7 +236,7 @@ export default function ExpenseReport() {
   // ใช้แสดงวันที่บันทึกและเป็นเป้าของปุ่ม "ปรับเป็นบวก" (กรณีใส่เครื่องหมายผิด)
   const uncategorizedOccurrences = useMemo(() => {
     const mapped = new Set(
-      mappings.map((m) => m.item.trim()).filter((item) => item !== ""),
+      reportMappings.map((m) => m.item.trim()).filter((item) => item !== ""),
     );
     const map = new Map<string, ExpenseEntry[]>();
     for (const e of entries) {
@@ -245,7 +250,7 @@ export default function ExpenseReport() {
     for (const list of map.values())
       list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     return map;
-  }, [entries, mappings, range]);
+  }, [entries, reportMappings, range]);
 
   const occKey = (e: ExpenseEntry) => `${e.date}|${e.description.trim()}|${e.amount}`;
 
@@ -257,11 +262,11 @@ export default function ExpenseReport() {
    * เพราะ schema ฝั่งเขียนรับสองค่านี้เท่านั้น (พฤติกรรมเดิมของการแก้วันเก่า)
    */
   const fixToPositive = async (occ: ExpenseEntry) => {
-    const desc = occ.description.trim();
+    const desc = (occ.originalDescription ?? occ.description).trim();
     const confirm = await Swal.fire({
       icon: "warning",
       title: "ปรับเป็นรายรับ (บวก)?",
-      html: `"${desc}" วันที่ ${occ.date}<br/>${fmtBaht(occ.amount)} → <b>${fmtBaht(Math.abs(occ.amount))}</b> ในสมุดบัญชี`,
+      text: `"${desc}" วันที่ ${occ.date} · ${fmtBaht(occ.amount)} → ${fmtBaht(Math.abs(occ.amount))} ในสมุดบัญชี`,
       showCancelButton: true,
       confirmButtonText: "ปรับเป็นบวก",
       cancelButtonText: "ยกเลิก",
@@ -270,7 +275,7 @@ export default function ExpenseReport() {
     if (!confirm.isConfirmed) return;
     setFixingKey(occKey(occ));
     try {
-      const res = await fetch(`/api/entries?date=${occ.date}`);
+      const res = await request(`/api/entries?date=${occ.date}`);
       if (!res.ok) {
         await handleHttpError(res, "โหลดข้อมูลวันดังกล่าวไม่สำเร็จ");
         return;
@@ -294,7 +299,7 @@ export default function ExpenseReport() {
         channel: e.channel === "โอน" ? "โอน" : "เงินสด",
         ...(e.gross != null ? { gross: e.gross } : {}),
       }));
-      const save = await fetch("/api/entries", {
+      const save = await request("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -334,7 +339,7 @@ export default function ExpenseReport() {
     if (!confirm.isConfirmed) return;
     setIniting(true);
     try {
-      const res = await fetch("/api/expense-categories/init", { method: "POST" });
+      const res = await request("/api/expense-categories/init", { method: "POST" });
       if (!res.ok) {
         await handleHttpError(res, "สร้างแท็บไม่สำเร็จ");
         return;
@@ -355,7 +360,7 @@ export default function ExpenseReport() {
 
   // ชีตสรุปในไฟล์เป็นสูตร SUMIFS ผูกกับชีตรายละเอียด — แก้ตัวเลขในไฟล์แล้วสรุปคำนวณใหม่เอง
   const downloadExcel = () => {
-    const bytes = buildExpenseWorkbook(entries, mappings, range.from, range.to);
+    const bytes = buildExpenseWorkbook(entries, reportMappings, range.from, range.to);
     const blob = new Blob([bytes], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });

@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
+import { request } from "@/lib/client-api";
+import { prepareReportEntries, type Catalog } from "@/lib/catalog";
 import { todayBangkok, thaiDateLabel } from "@/lib/date";
 import {
   CHANNELS,
@@ -249,8 +251,8 @@ export default function Pnd94Report() {
     }
     setPulling(true);
     try {
-      const res = await fetch(
-        `/api/entries/range?from=${range.from}&to=${range.to}`,
+      const res = await request(
+        `/api/entries/range?from=${range.from}&to=${range.to}&catalog=true`,
       );
       if (!res.ok) {
         if (res.status === 401) {
@@ -266,6 +268,7 @@ export default function Pnd94Report() {
         return;
       }
       const data = (await res.json()) as {
+        catalog: Catalog;
         entries: {
           date: string;
           description: string;
@@ -274,7 +277,7 @@ export default function Pnd94Report() {
           gross: number | null;
         }[];
       };
-      const mapped: UiRow[] = data.entries.map((r) => {
+      const mapped: UiRow[] = prepareReportEntries(data.entries, data.catalog).map((r) => {
         const channel = channelFromDescription(r.description);
         const isDelivery = isDeliveryChannel(channel);
         if (isDelivery && r.gross != null) {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
+import { request } from "@/lib/client-api";
 import { isValidDateStr, todayBangkok } from "@/lib/date";
 import { fmtBaht, presetRange, round2 } from "@/lib/pnd94";
 import {
@@ -15,6 +16,7 @@ import {
   type IncomeEntry,
 } from "@/lib/income-report";
 import { buildIncomeWorkbook } from "@/lib/income-export";
+import { prepareReportEntries, type Catalog } from "@/lib/catalog";
 
 /**
  * หน้ารายงานรายได้รายเดือน (read-only) — จัดประเภทจาก description + channel
@@ -88,16 +90,16 @@ export default function IncomeReport() {
     async (from: string, to: string): Promise<void> => {
       setLoadingRange(true);
       try {
-        const res = await fetch(
-          `/api/entries/range?from=${from}&to=${to}&include=all`,
+        const res = await request(
+          `/api/entries/range?from=${from}&to=${to}&include=all&catalog=true`,
         );
         if (!res.ok) {
           await handleHttpError(res, "ดึงข้อมูลสมุดบัญชีไม่สำเร็จ");
           return;
         }
-        const data = (await res.json()) as { entries: IncomeEntry[] };
+        const data = (await res.json()) as { entries: IncomeEntry[]; catalog: Catalog };
         // เก็บทั้งชุดไม่กรองเครื่องหมาย — lib ต้องเห็นแถวลบของโอนคืนลูกค้า
-        setEntries(data.entries);
+        setEntries(prepareReportEntries(data.entries, data.catalog));
       } finally {
         setLoadingRange(false);
       }
@@ -162,11 +164,11 @@ export default function IncomeReport() {
    * เพราะ schema ฝั่งเขียนรับสองค่านี้เท่านั้น (พฤติกรรมเดิมของการแก้วันเก่า)
    */
   const fixToNegative = async (occ: IncomeEntry) => {
-    const desc = occ.description.trim();
+    const desc = (occ.originalDescription ?? occ.description).trim();
     const confirm = await Swal.fire({
       icon: "warning",
       title: "ปรับเป็นรายจ่าย (ติดลบ)?",
-      html: `"${desc}" วันที่ ${occ.date}<br/>${fmtBaht(occ.amount)} → <b>-${fmtBaht(occ.amount)}</b> ในสมุดบัญชี`,
+      text: `"${desc}" วันที่ ${occ.date} · ${fmtBaht(occ.amount)} → -${fmtBaht(occ.amount)} ในสมุดบัญชี`,
       showCancelButton: true,
       confirmButtonText: "ปรับเป็นติดลบ",
       cancelButtonText: "ยกเลิก",
@@ -175,7 +177,7 @@ export default function IncomeReport() {
     if (!confirm.isConfirmed) return;
     setFixingKey(occKey(occ));
     try {
-      const res = await fetch(`/api/entries?date=${occ.date}`);
+      const res = await request(`/api/entries?date=${occ.date}`);
       if (!res.ok) {
         await handleHttpError(res, "โหลดข้อมูลวันดังกล่าวไม่สำเร็จ");
         return;
@@ -199,7 +201,7 @@ export default function IncomeReport() {
         channel: e.channel === "โอน" ? "โอน" : "เงินสด",
         ...(e.gross != null ? { gross: e.gross } : {}),
       }));
-      const save = await fetch("/api/entries", {
+      const save = await request("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,4 +1,6 @@
 import { google, type sheets_v4 } from "googleapis";
+import { createHash, randomInt } from "node:crypto";
+import { catalogSchema, defaultCatalog, type Catalog, type DescriptionUsage } from "@/lib/catalog";
 import { env } from "@/lib/env";
 import { dateStrToSerial, firstUnsavedDate, todayBangkok } from "@/lib/date";
 import {
@@ -201,6 +203,76 @@ export async function distinctDescriptions(accessToken: string): Promise<string[
   const data = [...set];
   descCache = { data, at: Date.now() };
   return data;
+}
+
+export async function descriptionUsage(accessToken: string): Promise<DescriptionUsage[]> {
+  const counts = new Map<string, DescriptionUsage>();
+  for (const row of await readRows(sheetsClient(accessToken))) {
+    const name = row.description.trim();
+    if (name) counts.set(name, {
+      name, count: (counts.get(name)?.count ?? 0) + 1,
+      type: row.amount < 0 ? "expense" : "income",
+      channel: row.channel === "โอน" ? "โอน" : "เงินสด",
+    });
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count);
+}
+
+const CATALOG_TAB = "ตั้งค่ารายการ";
+const catalogVersion = (catalog: Catalog) => createHash("sha256").update(JSON.stringify(catalog)).digest("hex");
+
+export async function readCatalog(accessToken: string): Promise<{ catalog: Catalog; version: string }> {
+  const api = sheetsClient(accessToken);
+  try {
+    const tab = await resolveTabByName(api, CATALOG_TAB, true);
+    if (!tab) {
+      const catalog = defaultCatalog();
+      return { catalog, version: catalogVersion(catalog) };
+    }
+    const res = await api.spreadsheets.values.get({ spreadsheetId: env.SHEET_ID, range: `'${CATALOG_TAB}'!A2` });
+    const raw: unknown = res.data.values?.[0]?.[0];
+    if (typeof raw !== "string" || !raw) throw new Error("ข้อมูลตั้งค่ารายการว่างหรือเสียหาย");
+    const catalog = catalogSchema.parse(JSON.parse(raw));
+    return { catalog, version: catalogVersion(catalog) };
+  } catch (err) {
+    if (isAccessDenied(err)) throw new SheetAccessError();
+    throw err;
+  }
+}
+
+export async function saveCatalog(accessToken: string, catalog: Catalog, baseVersion: string) {
+  const api = sheetsClient(accessToken);
+  const current = await readCatalog(accessToken);
+  if (current.version !== baseVersion) throw new ConflictError();
+  try {
+    const tab = await resolveTabByName(api, CATALOG_TAB, true);
+    if (tab) {
+      await api.spreadsheets.values.update({
+        spreadsheetId: env.SHEET_ID, range: `'${CATALOG_TAB}'!A2`, valueInputOption: "RAW",
+        requestBody: { values: [[JSON.stringify(catalog)]] },
+      });
+    } else {
+      const sheetId = randomInt(1, 2_000_000_000);
+      await api.spreadsheets.batchUpdate({
+        spreadsheetId: env.SHEET_ID,
+        requestBody: { requests: [
+          { addSheet: { properties: { sheetId, title: CATALOG_TAB, gridProperties: { rowCount: 10, columnCount: 1 } } } },
+          { updateCells: {
+            start: { sheetId, rowIndex: 0, columnIndex: 0 },
+            rows: [
+              { values: [{ userEnteredValue: { stringValue: "Owlcha: รายการมาตรฐาน ชื่อเรียกอื่น และรายการประจำ (แก้ผ่านหน้าเว็บ)" } }] },
+              { values: [{ userEnteredValue: { stringValue: JSON.stringify(catalog) } }] },
+            ],
+            fields: "userEnteredValue",
+          } },
+        ] },
+      });
+    }
+    return { catalog, version: catalogVersion(catalog) };
+  } catch (err) {
+    if (isAccessDenied(err)) throw new SheetAccessError();
+    throw err;
+  }
 }
 
 // ---------- เขียน (แทนที่ทั้งวัน + เส้นคั่น) — atomic batchUpdate เดียว ----------

@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
+import { request } from "@/lib/client-api";
+import { prepareReportEntries, type Catalog } from "@/lib/catalog";
 import { todayBangkok, thaiDateLabel } from "@/lib/date";
 import { presetRange, type RangePreset, fmtBaht, round2 } from "@/lib/pnd94";
 import {
@@ -271,8 +273,8 @@ export default function CashbookReport({
     }
     setPulling(true);
     try {
-      const res = await fetch(
-        `/api/entries/range?from=${range.from}&to=${range.to}&include=all`,
+      const res = await request(
+        `/api/entries/range?from=${range.from}&to=${range.to}&include=all&catalog=true`,
       );
       if (!res.ok) {
         if (res.status === 401) {
@@ -288,6 +290,7 @@ export default function CashbookReport({
         return;
       }
       const data = (await res.json()) as {
+        catalog: Catalog;
         entries: {
           date: string;
           description: string;
@@ -297,7 +300,7 @@ export default function CashbookReport({
         }[];
       };
       // แถว delivery แตกเป็น 2 แถว (รายรับ gross + รายจ่ายค่า GP) — ดู rowsFromRangeEntry
-      const mapped: UiCashbookRow[] = data.entries.flatMap((e) =>
+      const mapped: UiCashbookRow[] = prepareReportEntries(data.entries, data.catalog).flatMap((e) =>
         rowsFromRangeEntry(e).map((r) => ({
           ...r,
           id: uid(),

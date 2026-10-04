@@ -7,6 +7,12 @@ import { todayBangkok } from "@/lib/date";
 import { typeFromAmount, toSignedAmount, type EntryType } from "@/lib/entries";
 import type { CategoryMappingInput } from "@/lib/expense-report";
 import SummaryCard, { type SummaryEntry } from "@/components/SummaryCard";
+import ItemPicker from "@/components/ItemPicker";
+import Link from "next/link";
+import { canonicalName, expandCategoryMappings, suggestItems, type CatalogData, type Catalog } from "@/lib/catalog";
+import { request, requestJson } from "@/lib/client-api";
+import { channelFromDescription, isDeliveryChannel } from "@/lib/pnd94";
+import { readDraft } from "@/lib/draft";
 
 interface UiEntry {
   id: number;
@@ -24,7 +30,7 @@ interface UiEntry {
 
 /** รายรับจากแอปเดลิเวอรีที่โดนหัก GP — แสดง breakdown อัตโนมัติ */
 const isDeliveryDesc = (desc: string): boolean =>
-  /grab|lineman|shopee/i.test(desc);
+  isDeliveryChannel(channelFromDescription(desc));
 
 const DEFAULT_GP_PCT = "30";
 const DEFAULT_VAT_PCT = "7";
@@ -57,22 +63,10 @@ const newRow = (): UiEntry => ({
 });
 
 /** วันที่ยังไม่มีข้อมูล → prefill รายการประจำของร้าน (จำนวนเงินเว้นว่างให้กรอก) */
-const templateRows = (): UiEntry[] =>
-  (
-    [
-      ["expense", "น้ำแข็ง", "โอน"],
-      ["expense", "ค่าแรงพนักงาน", "โอน"],
-      ["income", "ขายหน้าร้าน", "เงินสด"],
-      ["income", "kshop", "โอน"],
-      ["income", "grab", "โอน"],
-    ] as const
-  ).map(([type, description, channel]) => ({
-    id: nextId++,
-    type,
-    description,
-    amount: "",
-    channel,
-  }));
+const templateRows = (catalog: Catalog | null): UiEntry[] =>
+  catalog?.recurring.length ? catalog.recurring.map(row => ({
+    ...row, id: nextId++, description: canonicalName(row.description, catalog.items),
+  })) : [newRow()];
 
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -85,20 +79,26 @@ const sanitizeAmount = (v: string): string => {
   return f !== undefined ? `${i}.${f.slice(0, 2)}` : s;
 };
 
-export default function LedgerApp({ email }: { email: string }) {
+export default function LedgerApp({ email, initialDate }: { email: string; initialDate?: string }) {
   const router = useRouter();
   const draftKey = `owlcha:draft:${email}`; // แยก key ตามผู้ใช้ — กันข้อมูลปนบนเครื่องร่วม
 
-  const [date, setDate] = useState(() => todayBangkok());
+  const [date, setDate] = useState(() => initialDate ?? todayBangkok());
   const [entries, setEntries] = useState<UiEntry[]>(() => [newRow()]);
   const [version, setVersion] = useState<string | null>(null);
   const [latestDate, setLatestDate] = useState<string | null>(null);
   const [descriptions, setDescriptions] = useState<string[]>([]);
+  const [catalogData, setCatalogData] = useState<CatalogData | null>(null);
+  const catalogRef = useRef<Catalog | null>(null);
+  const [catalogError, setCatalogError] = useState("");
+  const [loadedDate, setLoadedDate] = useState<string | null>(null);
+  const [initialChoice, setInitialChoice] = useState(false);
+  const [draftNotice, setDraftNotice] = useState("");
   /** null = แท็บหมวดหมู่ยังไม่ถูกสร้าง/โหลดไม่สำเร็จ → ซ่อน UI หมวดหมู่ไปเลย */
   const [catMappings, setCatMappings] = useState<CategoryMappingInput[] | null>(null);
   /** ชื่อรายการที่กำลังบันทึกหมวด — กันกดซ้ำระหว่างรอ API */
   const [catBusyItem, setCatBusyItem] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "loading" | "saving">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "saving">("loading");
   const [restored, setRestored] = useState(false);
 
   const [captureData, setCaptureData] = useState<{
@@ -106,6 +106,18 @@ export default function LedgerApp({ email }: { email: string }) {
     entries: SummaryEntry[];
   } | null>(null);
   const captureRef = useRef<HTMLDivElement>(null);
+
+  const loadCatalog = useCallback(async () => {
+    setCatalogError("");
+    try {
+      const result = await requestJson<CatalogData>("/api/catalog");
+      catalogRef.current = result.catalog;
+      setCatalogData(result);
+      setDescriptions(result.usage.map(u => u.name));
+    } catch (err) {
+      setCatalogError(err instanceof Error ? err.message : "โหลดรายการมาตรฐานไม่สำเร็จ");
+    }
+  }, []);
 
   // ---------- โหลด/แคช ----------
 
@@ -124,7 +136,7 @@ export default function LedgerApp({ email }: { email: string }) {
   /** โหลด mapping "รายการ → หมวดหมู่" — แท็บยังไม่มี/พลาดถือเป็นเรื่องปกติ แค่ไม่แสดง UI */
   const loadCategoryMappings = useCallback(async () => {
     try {
-      const res = await fetch("/api/expense-categories");
+      const res = await request("/api/expense-categories");
       if (!res.ok) return;
       const data = (await res.json()) as
         | { exists: false }
@@ -136,10 +148,12 @@ export default function LedgerApp({ email }: { email: string }) {
   }, []);
 
   const loadDay = useCallback(
-    async (d: string, { silent = false } = {}) => {
+    async (d: string, { silent = false, restore = true } = {}) => {
       setStatus("loading");
+      setVersion(null);
+      setLoadedDate(null);
       try {
-        const res = await fetch(`/api/entries?date=${d}`);
+        const res = await request(`/api/entries?date=${d}`);
         if (!res.ok) {
           const msg = await handleApiFailure(res);
           if (msg) void Swal.fire({ icon: "error", title: "โหลดไม่สำเร็จ", text: msg });
@@ -152,6 +166,7 @@ export default function LedgerApp({ email }: { email: string }) {
           firstUnsavedDate?: string;
         };
         setVersion(data.version);
+        setLoadedDate(d);
         setLatestDate(data.latestDate);
         if (data.entries.length) {
           setEntries(
@@ -173,16 +188,28 @@ export default function LedgerApp({ email }: { email: string }) {
             });
           }
         } else {
-          setEntries(templateRows());
+          setEntries(templateRows(catalogRef.current));
           if (!silent) {
             void Swal.fire({
               icon: "info",
-              title: "ยังไม่มีข้อมูล — เตรียมรายการประจำให้แล้ว",
+              title: catalogRef.current ? "ยังไม่มีข้อมูล — เตรียมรายการประจำให้แล้ว" : "ยังไม่มีข้อมูล — กรอกรายการด้วยตนเอง",
               timer: 1500,
               showConfirmButton: false,
             });
           }
         }
+        if (restore) {
+          try {
+            const draft = readDraft(localStorage, draftKey, d);
+            if (draft) {
+              setEntries(draft.entries.map(e => ({ ...e, id: nextId++ })));
+              setVersion(draft.version);
+              setDraftNotice(`กู้ฉบับร่างของ ${d} แล้ว ยังไม่ได้บันทึกลงชีต`);
+            } else setDraftNotice("");
+          } catch (err) {
+            setDraftNotice(err instanceof Error ? err.message : "อ่านฉบับร่างไม่ได้");
+          }
+        } else setDraftNotice("");
         return data;
       } catch {
         void Swal.fire({
@@ -195,50 +222,19 @@ export default function LedgerApp({ email }: { email: string }) {
         setStatus("idle");
       }
     },
-    [handleApiFailure],
+    [handleApiFailure, draftKey],
   );
 
-  // mount: เปิดที่ "วันเก่าสุดที่ยังไม่ได้บันทึก" เสมอ (ต้องถามชีตก่อนถึงจะรู้)
-  // draft ของผู้ใช้ใช้เฉพาะเมื่อเป็นวันเดียวกับวันเป้าหมาย — กันงานพิมพ์ค้างของวันนั้นหาย
-  // แต่ไม่ให้ draft ตรึงแอปไว้ที่วันเก่า (ไม่งั้น feature นี้ไม่ได้ทำงานเลยเพราะมี draft ค้างตลอด)
+  // เลือกวันที่จากลิงก์ตรวจข้อมูล หรือวันถัดจากวันล่าสุด แล้วกู้ draft เฉพาะวันนั้น
   useEffect(() => {
-    type Draft = {
-      date?: string;
-      entries?: UiEntry[];
-      version?: string | null;
-      latestDate?: string | null;
-    };
-    let draft: Draft | null = null;
-    try {
-      const raw = localStorage.getItem(draftKey);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Draft;
-        if (parsed.date && Array.isArray(parsed.entries) && parsed.entries.length) {
-          draft = parsed;
-        }
-      }
-    } catch {
-      /* draft เสีย → เริ่มใหม่ */
-    }
-
-    const restoreDraft = (d: Draft) => {
-      setDate(d.date!);
-      setEntries(d.entries!.map((e) => ({ ...e, id: nextId++ })));
-      setVersion(d.version ?? null);
-      setLatestDate(d.latestDate ?? null);
-    };
-
     void (async () => {
-      const today = todayBangkok();
+      await loadCatalog();
+      const today = initialDate ?? todayBangkok();
       const data = await loadDay(today, { silent: true });
-      if (!data) {
-        // ถามชีตไม่ได้ (เน็ต/สิทธิ์) → กู้ draft ตามเดิมถ้ามี ดีกว่าทิ้งงานค้าง
-        if (draft) restoreDraft(draft);
-      } else {
-        const target = data.firstUnsavedDate ?? today;
-        if (draft?.date === target) {
-          restoreDraft(draft);
-        } else if (target !== today) {
+      if (data) {
+        const target = initialDate ?? data.firstUnsavedDate ?? today;
+        setInitialChoice(!initialDate && target !== today);
+        if (target !== today) {
           setDate(target);
           await loadDay(target, { silent: true });
         }
@@ -247,28 +243,22 @@ export default function LedgerApp({ email }: { email: string }) {
       setRestored(true);
     })();
 
-    void fetch("/api/descriptions")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { descriptions?: string[] } | null) => {
-        if (d?.descriptions) setDescriptions(d.descriptions);
-      })
-      .catch(() => undefined);
     void loadCategoryMappings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // เก็บ draft ทุกครั้งที่แก้ (หลัง restore แล้วเท่านั้น)
   useEffect(() => {
-    if (!restored) return;
+    if (!restored || loadedDate !== date) return;
     try {
       localStorage.setItem(
-        draftKey,
+        `${draftKey}:${date}`,
         JSON.stringify({ date, entries, version, latestDate }),
       );
     } catch {
-      /* storage เต็ม/ปิด — draft เป็น best-effort */
+      setDraftNotice("เก็บฉบับร่างบนเครื่องไม่สำเร็จ กรุณาบันทึกก่อนเปลี่ยนหน้าหรือวันที่");
     }
-  }, [restored, draftKey, date, entries, version, latestDate]);
+  }, [restored, draftKey, date, entries, version, latestDate, loadedDate]);
 
   // ---------- แก้ไขรายการ ----------
 
@@ -311,12 +301,12 @@ export default function LedgerApp({ email }: { email: string }) {
   /** first-wins ตามลำดับแถวในแท็บ — กติกาเดียวกับ buildExpenseReport */
   const catByItem = useMemo(() => {
     const map = new Map<string, string>();
-    for (const m of catMappings ?? []) {
+    for (const m of expandCategoryMappings(catMappings ?? [], catalogData?.catalog ?? { items: [], recurring: [] })) {
       const item = m.item.trim();
       if (item && !map.has(item)) map.set(item, m.category);
     }
     return map;
-  }, [catMappings]);
+  }, [catMappings, catalogData]);
 
   const categoryChoices = useMemo(() => {
     const seen = new Set<string>();
@@ -342,12 +332,12 @@ export default function LedgerApp({ email }: { email: string }) {
       if (!res.isConfirmed || !res.value?.trim()) return;
       category = res.value.trim();
     }
-    const current = catByItem.get(item);
+    const current = catMappings?.find(m => m.item.trim() === item)?.category;
     if (category === current) return;
 
     setCatBusyItem(item);
     try {
-      const res = await fetch("/api/expense-categories", {
+      const res = await request("/api/expense-categories", {
         // รายการที่ยังไม่เคย map = เพิ่มแถวใหม่, เคยแล้ว = ย้ายหมวดแถวเดิม
         method: current === undefined ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -382,17 +372,17 @@ export default function LedgerApp({ email }: { email: string }) {
   // ---------- บันทึก ----------
 
   /** แถว template ที่ไม่ได้กรอกจำนวนเงิน (ช่องว่าง) จะไม่ถูกบันทึก — กันแถว 0 ขยะลงชีต */
-  const buildPayload = (): (SummaryEntry & { gross?: number })[] =>
-    entries
+  const buildPayload = (rows = entries): (SummaryEntry & { gross?: number })[] =>
+    rows
       .filter((e) => e.amount.trim() !== "")
       .map((e) => {
         const base = {
-          description: e.description.trim(),
+          description: canonicalName(e.description, catalogRef.current?.items ?? []),
           amount: toSignedAmount(e.type, parseFloat(e.amount) || 0),
           channel: e.channel,
         };
         // ยอดขายบนแอป (คอลัมน์ F): ใช้ค่าที่แก้เอง หรือค่าที่คำนวณจากยอดสุทธิ
-        if (e.type === "income" && isDeliveryDesc(e.description)) {
+        if (e.type === "income" && isDeliveryDesc(base.description)) {
           const manual = e.gross?.trim() ? parseFloat(e.gross) : NaN;
           const computed = gpBreakdownFromNet(
             parseFloat(e.amount) || 0,
@@ -445,7 +435,7 @@ export default function LedgerApp({ email }: { email: string }) {
     setCaptureData(null);
     if (!img) return false;
     try {
-      const res = await fetch("/api/notify", {
+      const res = await request("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date, imageBase64: img }),
@@ -459,7 +449,7 @@ export default function LedgerApp({ email }: { email: string }) {
   const doSave = async (payload: SummaryEntry[], baseVersion: string) => {
     setStatus("saving");
     try {
-      const res = await fetch("/api/entries", {
+      const res = await request("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date, entries: payload, baseVersion }),
@@ -484,7 +474,9 @@ export default function LedgerApp({ email }: { email: string }) {
       const sent = await notifyTelegram(payload);
 
       try {
-        localStorage.removeItem(draftKey);
+        localStorage.removeItem(`${draftKey}:${date}`);
+        const legacy = readDraft(localStorage, draftKey, date);
+        if (legacy) localStorage.removeItem(draftKey);
       } catch {
         /* ignore */
       }
@@ -495,7 +487,8 @@ export default function LedgerApp({ email }: { email: string }) {
           ? "ส่งรูปสรุปเข้า Telegram แล้ว"
           : "แต่ส่งรูปเข้า Telegram ไม่สำเร็จ — ข้อมูลบันทึกแล้ว ลองส่งใหม่ได้จากการบันทึกซ้ำ",
       });
-      await loadDay(date, { silent: true });
+      await loadDay(date, { silent: true, restore: false });
+      await loadCatalog();
     } finally {
       setStatus("idle");
     }
@@ -504,7 +497,7 @@ export default function LedgerApp({ email }: { email: string }) {
   /** 409: ข้อมูลบนเซิร์ฟเวอร์เปลี่ยน — แสดงของเซิร์ฟเวอร์เทียบก่อน, ห้ามเขียนทับเงียบ ๆ,
    *  ปุ่ม "เขียนทับ" ไม่ใช่ default, ข้อมูลที่พิมพ์ค้างอยู่ไม่หาย (อยู่ใน state+draft) */
   const handleConflict = async (payload: SummaryEntry[]) => {
-    const res = await fetch(`/api/entries?date=${date}`);
+    const res = await request(`/api/entries?date=${date}`);
     if (!res.ok) {
       void Swal.fire({ icon: "error", title: "ตรวจสอบข้อมูลล่าสุดไม่สำเร็จ" });
       return;
@@ -618,14 +611,14 @@ export default function LedgerApp({ email }: { email: string }) {
     });
 
     if (choice.isConfirmed) {
-      await loadDay(date);
+      await loadDay(date, { restore: false });
     } else if (choice.isDenied) {
       await doSave(payload, server.version);
     }
   };
 
   const onSaveClick = async () => {
-    if (!version) {
+    if (!version || loadedDate !== date) {
       void Swal.fire({
         icon: "error",
         title: "ยังโหลดข้อมูลเดิมไม่สำเร็จ",
@@ -640,7 +633,25 @@ export default function LedgerApp({ email }: { email: string }) {
       void Swal.fire({ icon: "error", title: "จำนวนเงินไม่ถูกต้อง" });
       return;
     }
-    const payload = buildPayload();
+    let saveRows = entries;
+    const seen = new Set<string>();
+    for (const row of entries.filter(e => e.amount.trim() !== "")) {
+      const name = canonicalName(row.description, catalogRef.current?.items ?? []);
+      if (!name || seen.has(name) || descriptions.includes(name) || catalogRef.current?.items.some(i => i.name === name)) continue;
+      seen.add(name);
+      const suggestion = suggestItems(name, catalogRef.current?.items ?? [], descriptions).find(s => s.name !== name);
+      if (!suggestion) continue;
+      const choice = await Swal.fire({
+        title: "มีรายการชื่อใกล้เคียงอยู่แล้ว",
+        text: `“${name}” หมายถึง “${suggestion.name}” หรือไม่? ระบบไม่รวมชื่อให้อัตโนมัติ`,
+        showDenyButton: true, showCancelButton: true,
+        confirmButtonText: `ใช้ ${suggestion.name}`, denyButtonText: "ใช้ชื่อใหม่ครั้งนี้", cancelButtonText: "กลับไปแก้ไข",
+      });
+      if (choice.isConfirmed) saveRows = saveRows.map(e => e.description.trim() === row.description.trim() ? { ...e, description: suggestion.name } : e);
+      else if (!choice.isDenied) return;
+    }
+    setEntries(saveRows);
+    const payload = buildPayload(saveRows);
     if (!payload.length) {
       void Swal.fire({
         icon: "warning",
@@ -669,11 +680,28 @@ export default function LedgerApp({ email }: { email: string }) {
 
   // ---------- render ----------
 
-  const busy = status !== "idle";
+  const busy = status !== "idle" || !restored;
   const backdated = latestDate !== null && date < latestDate;
 
   return (
     <div>
+      <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+        <Link className="text-amber-700 underline" href="/settings">จัดการชื่อ / รายการประจำ</Link>
+        <Link className="text-blue-700 underline" href="/data-quality">ตรวจข้อมูลผิดปกติ</Link>
+      </div>
+      {catalogError && <div role="alert" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{catalogError} · รายการมาตรฐานและรายการประจำอาจไม่พร้อมใช้ <button className="underline" onClick={() => void loadCatalog()}>ลองโหลดใหม่</button></div>}
+      {draftNotice && <p role="status" className="mb-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftNotice}</p>}
+      {initialChoice && <p className="mb-3 text-sm text-gray-600">เลือกวันถัดจากวันที่บันทึกล่าสุดให้แล้ว โปรดตรวจวันที่ก่อนบันทึก</p>}
+      {catalogData && <div className="mb-3">
+        <p className="mb-2 text-xs text-gray-600">รายการโปรด / ใช้บ่อย — กดเพื่อเพิ่มแถว (จำนวนเงินเว้นว่าง)</p>
+        <div className="flex flex-wrap gap-2">
+          {suggestItems("", catalogData.catalog.items, descriptions).map(s => {
+            const preset = catalogData.catalog.recurring.find(r => canonicalName(r.description, catalogData.catalog.items) === s.name);
+            const historical = catalogData.usage.find(u => canonicalName(u.name, catalogData.catalog.items) === s.name);
+            return <button key={s.name} disabled={status !== "idle" || entries.length >= 100} className="rounded-full border bg-white px-3 py-2 text-sm text-amber-800 disabled:opacity-50" onClick={() => setEntries(prev => [...prev, { ...newRow(), description: s.name, type: preset?.type ?? historical?.type ?? "expense", channel: preset?.channel ?? historical?.channel ?? "เงินสด" }])}>{s.favorite ? "★ " : ""}{s.name}</button>;
+          })}
+        </div>
+      </div>}
       {/* D11: เตือนเมื่อแก้วันย้อนหลัง */}
       {backdated && (
         <div className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
@@ -700,6 +728,7 @@ export default function LedgerApp({ email }: { email: string }) {
             className="block w-full min-w-0 max-w-full appearance-none rounded-lg border border-gray-300 px-4 py-2.5 focus:ring-2 focus:ring-blue-400 focus:outline-none"
             style={{ WebkitAppearance: "none" }}
           />
+          <button type="button" disabled={busy} className="mt-2 text-sm text-blue-700 underline" onClick={() => { const d = todayBangkok(); setDate(d); void loadDay(d); }}>วันนี้</button>
         </div>
       </div>
 
@@ -750,18 +779,16 @@ export default function LedgerApp({ email }: { email: string }) {
                 ×
               </button>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_180px]">
-              <input
-                type="text"
-                placeholder="รายการ เช่น ชาไข่มุก"
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
+              <ItemPicker
                 value={e.description}
                 disabled={busy}
-                maxLength={200}
-                list="desc-list"
-                autoComplete="off"
-                onChange={(ev) => update(e.id, { description: ev.target.value })}
-                className="rounded-lg border border-gray-300 px-3 py-2"
+                items={catalogData?.catalog.items ?? []}
+                history={descriptions}
+                category={name => catByItem.get(name)}
+                onChange={description => update(e.id, { description })}
               />
+              <label className="block min-w-0 text-xs text-gray-600">จำนวนเงิน (บาท)
               <input
                 type="text"
                 inputMode="decimal"
@@ -773,10 +800,11 @@ export default function LedgerApp({ email }: { email: string }) {
                 value={e.amount}
                 disabled={busy}
                 onChange={(ev) => update(e.id, { amount: sanitizeAmount(ev.target.value) })}
-                className={`rounded-lg border border-gray-300 px-3 py-2 text-right ${
+                className={`block w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-right text-base ${
                   e.type === "expense" ? "text-red-700" : "text-green-700"
                 }`}
               />
+              </label>
             </div>
 
             {/* หมวดหมู่ค่าใช้จ่าย — โผล่เฉพาะแถวรายจ่ายที่มีชื่อรายการ และแท็บหมวดหมู่ถูกสร้างแล้ว */}
@@ -784,7 +812,7 @@ export default function LedgerApp({ email }: { email: string }) {
               catMappings !== null &&
               e.description.trim() !== "" &&
               (() => {
-                const item = e.description.trim();
+                const item = canonicalName(e.description, catalogRef.current?.items ?? []);
                 const current = catByItem.get(item);
                 return (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
@@ -882,13 +910,6 @@ export default function LedgerApp({ email }: { email: string }) {
           </div>
         ))}
       </div>
-      {/* datalist เดียวทั้งหน้า (ปิดหนี้ id ซ้ำข้อ 10) */}
-      <datalist id="desc-list">
-        {descriptions.map((d) => (
-          <option key={d} value={d} />
-        ))}
-      </datalist>
-
       {/* ยอดสรุปสด + ปุ่มหลัก — pin ติดขอบล่างจอตลอด เนื้อหาเลื่อนอยู่ด้านหลัง */}
       <div className="sticky bottom-0 z-40 -mx-4 mt-4 border-t border-gray-200 bg-gray-50/95 px-4 pt-2 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur">
         <div className="grid grid-cols-3 gap-2 rounded-xl bg-white p-3 text-center shadow">
@@ -913,7 +934,7 @@ export default function LedgerApp({ email }: { email: string }) {
           <button
             type="button"
             onClick={addRow}
-            disabled={busy}
+            disabled={busy || entries.length >= 100}
             className="flex-1 rounded-lg bg-green-500 py-3 text-lg font-semibold text-white enabled:hover:bg-green-600 disabled:opacity-50"
           >
             + เพิ่มรายการ
@@ -921,7 +942,7 @@ export default function LedgerApp({ email }: { email: string }) {
           <button
             type="button"
             onClick={() => void onSaveClick()}
-            disabled={busy}
+            disabled={busy || !version || loadedDate !== date}
             className="flex-1 rounded-lg bg-blue-500 py-3 text-lg font-semibold text-white enabled:hover:bg-blue-600 disabled:opacity-50"
           >
             {status === "saving" ? "กำลังบันทึก…" : "บันทึกทั้งหมด"}

@@ -15,6 +15,11 @@ const MESSAGES: Record<string, { title: string; detail: string }> = {
     title: "การเชื่อมต่อกับ Google หมดอายุ",
     detail: "กรุณาเข้าสู่ระบบใหม่เพื่อใช้งานต่อ",
   },
+  "sheet-access": {
+    title: "กรุณาเข้าสู่ระบบใหม่",
+    detail:
+      "ระบบออกจากบัญชีให้อัตโนมัติเนื่องจากไม่มีสิทธิ์เข้าถึงชีต กรุณาเข้าสู่ระบบด้วยบัญชีที่เจ้าของร้านแชร์ไฟล์ให้และอนุญาตการเข้าถึง Google Sheets",
+  },
 };
 
 export default async function LoginPage({

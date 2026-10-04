@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/guard";
 import { jsonError, rateLimitedResponse } from "@/lib/api";
 import { rateLimit } from "@/lib/ratelimit";
 import { rangeQuerySchema } from "@/lib/schema";
-import { getRange, SheetAccessError, SheetNotFoundError } from "@/lib/sheets";
+import { getRange, readCatalog, SheetAccessError, SheetNotFoundError } from "@/lib/sheets";
 
 /**
  * GET /api/entries/range?from=YYYY-MM-DD&to=YYYY-MM-DD[&include=all]
@@ -49,6 +49,10 @@ export async function GET(req: NextRequest) {
       parsed.data.to,
       { includeAll },
     );
+    if (req.nextUrl.searchParams.get("catalog") === "true") {
+      const settings = await readCatalog(guard.token.accessToken ?? "");
+      return NextResponse.json({ ...data, catalog: settings.catalog });
+    }
     return NextResponse.json(data);
   } catch (err) {
     return mapSheetError(err);

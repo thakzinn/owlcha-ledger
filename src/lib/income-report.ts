@@ -40,6 +40,7 @@ export interface IncomeEntry {
   /** YYYY-MM-DD */
   date: string;
   description: string;
+  originalDescription?: string;
   /** มีเครื่องหมาย — รายรับคือค่าบวก (ลบเฉพาะโอนคืนลูกค้าที่นำมาหักช่องโอน) */
   amount: number;
   channel: string;
